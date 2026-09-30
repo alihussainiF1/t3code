@@ -15,7 +15,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { describe } from "vite-plus/test";
 
-import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
+import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import * as OpenCodeServerLedger from "../OpenCodeServerLedger.ts";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
@@ -129,7 +129,7 @@ describe("OpenCode2Server error details", () => {
       Effect.provide(
         Layer.mergeAll(
           OpenCode2Client.layer.pipe(Layer.provide(httpClient)),
-          OpenCodeRuntimeLive.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+          OpenCodeRuntime.OpenCodeRuntimeLive.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
         ).pipe(Layer.provideMerge(NodeServices.layer)),
       ),
     );
@@ -244,7 +244,7 @@ describe("OpenCode2Server spawned server", () => {
         Effect.provide(
           Layer.mergeAll(
             OpenCode2Client.layer,
-            OpenCodeRuntimeLive.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+            OpenCodeRuntime.OpenCodeRuntimeLive.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
           ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
         ),
       ),
