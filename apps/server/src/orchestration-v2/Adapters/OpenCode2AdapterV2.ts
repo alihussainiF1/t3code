@@ -2032,11 +2032,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ended.unsettled = false;
         return;
       }
-      // Only marks where a turn's own execution begins; it never ends one.
+      // Marks where a running turn's own execution begins; it never ends one.
+      // With no turn running it is a subagent's or a follow-up's start, below.
       if (event.type === "unreadable.execution.started") {
         const turn = threads.get(event.sessionID)?.active;
-        if (turn !== undefined) turn.awaitingStart = false;
-        return;
+        if (turn !== undefined) {
+          turn.awaitingStart = false;
+          return;
+        }
       }
       if (event.type === "unreadable.execution.ended") {
         const state = threads.get(event.sessionID);
@@ -2115,20 +2118,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         state.subagent.prompt = event.data.item.payload.text;
         return;
       }
+      const started =
+        event.type === "session.execution.started" || event.type === "unreadable.execution.started";
       // Each execution of a subagent's session is a turn on its child thread.
-      if (
-        state.subagent !== undefined &&
-        state.active === undefined &&
-        event.type === "session.execution.started"
-      ) {
+      if (state.subagent !== undefined && state.active === undefined && started) {
         return yield* startChildTurn(state);
       }
       const turn = state.active;
       if (turn === undefined) {
         // OpenCode started the thread's session on its own.
-        if (event.type === "session.execution.started" && state.subagent === undefined) {
-          return yield* onWake(state);
-        }
+        if (started && state.subagent === undefined) return yield* onWake(state);
         return;
       }
       // A session runs one execution at a time, and each opens with `started`
