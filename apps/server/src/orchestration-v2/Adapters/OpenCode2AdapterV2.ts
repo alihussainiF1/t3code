@@ -365,22 +365,19 @@ const formAnswer = (form: NativeForm, answers: Readonly<Record<string, unknown>>
 const approves = (decision: ProviderApprovalDecision) =>
   decision === "accept" || decision === "acceptForSession" || decision === "acceptAlways";
 
-/** OpenCode dropped the request (its execution ended), so nothing waits on an answer. */
-const GONE: ReadonlySet<string> = new Set([
-  "PermissionNotFoundError",
-  "FormNotFoundError",
-  "FormAlreadySettledError",
-  "SessionNotFoundError",
-]);
-const unlessGone = <E extends { readonly _tag: string }>(
-  answer: Effect.Effect<void, E>,
-): Effect.Effect<void, E> =>
-  answer.pipe(
-    Effect.catchIf(
-      (error: E) => GONE.has(error._tag),
-      () => Effect.void,
-    ),
-  );
+/**
+ * An answer to a request OpenCode already dropped (its execution ended, or
+ * its session is gone): nothing waits on it, so it counts as delivered.
+ */
+const permissionGone = {
+  PermissionNotFoundError: () => Effect.void,
+  SessionNotFoundError: () => Effect.void,
+};
+const formGone = {
+  FormNotFoundError: () => Effect.void,
+  FormAlreadySettledError: () => Effect.void,
+  SessionNotFoundError: () => Effect.void,
+};
 
 /** The session rules an agent keeps for its own directories, which T3's blanket rules would override. */
 const agentPaths = (rules: ReadonlyArray<Rule>) =>
@@ -867,16 +864,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       native: { readonly type: "permission" | "form"; readonly id: string },
     ): Effect.Effect<void> =>
       native.type === "permission"
-        ? unlessGone(
-            client.permission.reply({
+        ? client.permission
+            .reply({
               sessionID: Session.ID.make(sessionId),
               requestID: Permission.ID.make(native.id),
               decision: "reject",
-            }),
-          ).pipe(Effect.timeout(REQUEST_REPLY_TIMEOUT), Effect.ignore({ log: true }))
-        : unlessGone(
-            client.session.form.cancel({ sessionID: sessionId, formID: Form.ID.make(native.id) }),
-          ).pipe(Effect.timeout(REQUEST_REPLY_TIMEOUT), Effect.ignore({ log: true }));
+            })
+            .pipe(
+              Effect.catchTags(permissionGone),
+              Effect.timeout(REQUEST_REPLY_TIMEOUT),
+              Effect.ignore({ log: true }),
+            )
+        : client.session.form
+            .cancel({ sessionID: sessionId, formID: Form.ID.make(native.id) })
+            .pipe(
+              Effect.catchTags(formGone),
+              Effect.timeout(REQUEST_REPLY_TIMEOUT),
+              Effect.ignore({ log: true }),
+            );
 
     /**
      * Stops what a session still waits on when this runtime first loads it:
@@ -1835,29 +1840,28 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           const delivered = yield* native.type === "permission"
             ? deliver(
-                unlessGone(
-                  client.permission.reply({
+                client.permission
+                  .reply({
                     sessionID,
                     requestID: Permission.ID.make(native.id),
                     decision: decision !== undefined && approves(decision) ? "once" : "reject",
                     // Without a message OpenCode ends the whole run, which is Cancel.
                     ...(decision === "decline" ? { message: DECLINED } : {}),
-                  }),
-                ),
+                  })
+                  .pipe(Effect.catchTags(permissionGone)),
               )
             : deliver(
-                unlessGone(
-                  answers === undefined || decision === "decline" || decision === "cancel"
-                    ? client.session.form.cancel({
-                        sessionID: entry.sessionId,
-                        formID: Form.ID.make(native.id),
-                      })
-                    : client.session.form.reply({
-                        sessionID: entry.sessionId,
-                        formID: Form.ID.make(native.id),
-                        answer: formAnswer(native.form, answers),
-                      }),
-                ),
+                (answers === undefined || decision === "decline" || decision === "cancel"
+                  ? client.session.form.cancel({
+                      sessionID: entry.sessionId,
+                      formID: Form.ID.make(native.id),
+                    })
+                  : client.session.form.reply({
+                      sessionID: entry.sessionId,
+                      formID: Form.ID.make(native.id),
+                      answer: formAnswer(native.form, answers),
+                    })
+                ).pipe(Effect.catchTags(formGone)),
               );
           yield* forgetRequest(entry);
           if (!delivered) yield* abandonRequest(entry.state, "answer not delivered");

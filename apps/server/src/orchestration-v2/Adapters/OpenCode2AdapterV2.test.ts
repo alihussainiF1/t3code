@@ -918,6 +918,41 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("counts an answer to a request OpenCode already dropped as delivered", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          shellAskEvent,
+          // The execution ended first, so OpenCode no longer knows the request.
+          out("permission.reply", {
+            sessionID: SESSION,
+            requestID: shellAsk.data.id,
+            decision: "once",
+          }),
+          reply("permission.reply", {
+            status: 404,
+            body: {
+              _tag: "PermissionNotFoundError",
+              requestID: shellAsk.data.id,
+              message: "Permission request not found",
+            },
+          }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { supervised: true },
+      );
+      const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread, bigPickle, "approval-required"));
+      const request = yield* Fiber.join(requested);
+      yield* runtime.respondToRuntimeRequest({ requestId: request!.id, decision: "accept" });
+      // Not "waiting on a request T3 Code couldn't answer": nothing waits on it.
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("declines a form T3 cannot show with the reason, instead of leaving it open", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
