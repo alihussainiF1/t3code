@@ -19,6 +19,7 @@ import {
   type ProviderReplayEntry,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -458,6 +459,111 @@ describe("OpenCode2 adapter", () => {
       yield* Fiber.join(interrupt);
       assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  /** A turn whose model launched a background subagent that still runs. */
+  const backgroundLaunch = (child: string): ReadonlyArray<ProviderReplayEntry> => {
+    const call = "call-background";
+    const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: call };
+    return [
+      out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+      promptAccepted,
+      event("session.execution.started", { sessionID: SESSION }),
+      event("session.tool.input.started", { ...tool, name: "subagent" }),
+      event("session.tool.called", {
+        ...tool,
+        name: "subagent",
+        input: { description: "Sleep", prompt: "sleep", background: true },
+        executed: false,
+      }),
+      event("session.created", {
+        sessionID: child,
+        parentID: SESSION,
+        location: { directory: WORK },
+        title: "Sleep",
+        agent: "general",
+      }),
+      event("session.tool.progress", {
+        ...tool,
+        metadata: { sessionID: child, status: "running" },
+      }),
+    ];
+  };
+  // The subagent's child thread hangs off the app thread's lineage.
+  const withLineage = (thread: OrchestrationV2ProviderThread) => ({
+    ...turnInput(thread),
+    appThread: {
+      id: threadId,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+    } as OrchestrationV2AppThread,
+  });
+  const CHILD = "ses_f1485c529ffea4URrYruwEg0Ja";
+  /**
+   * The single reader of the runtime's events: resolves `attached` once the
+   * running background child has its thread, then returns the turn's terminal.
+   */
+  const watchBackgroundTurn = (runtime: ProviderAdapterV2SessionRuntime) =>
+    Effect.gen(function* () {
+      const attached = yield* Deferred.make<void>();
+      const terminal = yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          event.type === "subagent.updated" && event.subagent.childThreadId !== null
+            ? Deferred.succeed(attached, undefined)
+            : Effect.void,
+        ),
+        Stream.filter(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+            event.type === "turn.terminal",
+        ),
+        Stream.runHead,
+        Effect.map(Option.getOrUndefined),
+        Effect.forkScoped,
+      );
+      return { attached: Deferred.await(attached), terminal: Fiber.join(terminal) };
+    });
+  it.effect("keeps background subagents running when a turn is interrupted to restart it", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        // Only the parent's execution is stopped.
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: SESSION }),
+      ]);
+      const watch = yield* watchBackgroundTurn(runtime);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.attached;
+      // The orchestrator's restart interrupt: no `requestRuntimeRestart`.
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+      });
+      assert.equal((yield* watch.terminal)?.status, "interrupted");
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("stops background subagents on a user Stop", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", { interrupted: true }),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: SESSION }),
+      ]);
+      const watch = yield* watchBackgroundTurn(runtime);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.attached;
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.equal((yield* watch.terminal)?.status, "interrupted");
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
   );
 
   /** A prompt accepted, then a Stop the server never answers, advanced past its timeout. */
