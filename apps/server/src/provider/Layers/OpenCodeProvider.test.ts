@@ -13,19 +13,13 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { beforeEach } from "vite-plus/test";
 
 import { OpenCodeSettings } from "@t3tools/contracts";
-import { ServerConfig } from "../../config.ts";
-import {
-  OpenCodeRuntime,
-  OpenCodeRuntimeError,
-  resolveOpenCodeServerPassword,
-  type OpenCodeRuntimeShape,
-} from "../opencodeRuntime.ts";
+import * as ServerConfig from "../../config.ts";
+import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import {
   checkOpenCodeProviderStatus,
   openCodeCommandsToServerProviderSlashCommands,
 } from "./OpenCodeProvider.ts";
-import type { OpenCodeInventory } from "../opencodeRuntime.ts";
 import { readOpenCodeGoUsageLimits } from "./openCodeUsageLimits.ts";
 import { OPENCODE_2_UNSUPPORTED_MESSAGE, probeOpenCodeRuntime } from "../opencodeVersionProbe.ts";
 import {
@@ -202,7 +196,7 @@ const runtimeMock = {
   },
 };
 
-const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
+const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
   startOpenCodeServerProcess: ({ serverPassword, environment }) =>
     Effect.gen(function* () {
       yield* Effect.addFinalizer(() =>
@@ -210,7 +204,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           runtimeMock.state.closeCalls += 1;
         }),
       );
-      const effectiveServerPassword = resolveOpenCodeServerPassword({
+      const effectiveServerPassword = OpenCodeRuntime.resolveOpenCodeServerPassword({
         external: false,
         ...(serverPassword !== undefined ? { serverPassword } : {}),
         ...(environment !== undefined ? { environment } : {}),
@@ -228,7 +222,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
   connectToOpenCodeServer: ({ serverUrl, serverPassword }) =>
     Effect.gen(function* () {
       if (runtimeMock.state.connectionError) {
-        return yield* new OpenCodeRuntimeError({
+        return yield* new OpenCodeRuntime.OpenCodeRuntimeError({
           operation: "global.health",
           detail: runtimeMock.state.connectionError.message,
           cause: runtimeMock.state.connectionError,
@@ -254,7 +248,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       ? Effect.never
       : runtimeMock.state.runVersionError
         ? Effect.fail(
-            new OpenCodeRuntimeError({
+            new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "runOpenCodeCommand",
               detail: runtimeMock.state.runVersionError.message,
               cause: runtimeMock.state.runVersionError,
@@ -263,29 +257,31 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
   createOpenCodeSdkClient: (input) => {
     runtimeMock.state.sdkClientInputs.push(input);
-    return {} as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>;
+    return {} as unknown as ReturnType<
+      OpenCodeRuntime.OpenCodeRuntimeShape["createOpenCodeSdkClient"]
+    >;
   },
   loadOpenCodeInventory: () =>
     runtimeMock.state.inventoryError
       ? Effect.fail(
-          new OpenCodeRuntimeError({
+          new OpenCodeRuntime.OpenCodeRuntimeError({
             operation: "loadOpenCodeInventory",
             detail: runtimeMock.state.inventoryError.message,
             cause: runtimeMock.state.inventoryError,
           }),
         )
-      : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory),
+      : Effect.succeed(runtimeMock.state.inventory as OpenCodeRuntime.OpenCodeInventory),
   loadInventoryFromCli: ({ cwd }) => {
     runtimeMock.state.inventoryCwd = cwd;
     return runtimeMock.state.inventoryError
       ? Effect.fail(
-          new OpenCodeRuntimeError({
+          new OpenCodeRuntime.OpenCodeRuntimeError({
             operation: "loadInventoryFromCli",
             detail: runtimeMock.state.inventoryError.message,
             cause: runtimeMock.state.inventoryError,
           }),
         )
-      : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory);
+      : Effect.succeed(runtimeMock.state.inventory as OpenCodeRuntime.OpenCodeInventory);
   },
   loadOpenCodeSkills: () => Effect.succeed([]),
   loadSkillsFromCli: () => Effect.succeed([]),
@@ -311,7 +307,7 @@ it("keeps native and MCP commands while preserving compaction and separate skill
   );
 });
 
-const testLayer = Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble).pipe(
+const testLayer = Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -342,7 +338,7 @@ const checkProvider = Effect.fn("checkProvider")(function* (
       });
       const probe = probeOpenCodeRuntime(settings, environment).pipe(
         Effect.provideService(HttpClient.HttpClient, server),
-        Effect.provideService(OpenCodeRuntime, OpenCodeRuntimeTestDouble),
+        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
       );
       return yield* checkOpenCodeProviderStatus(settings, cwd, probe).pipe(
         Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),

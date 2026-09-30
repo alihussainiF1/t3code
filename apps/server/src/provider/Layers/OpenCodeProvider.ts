@@ -19,13 +19,7 @@ import {
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
-import {
-  MINIMUM_OPENCODE_VERSION,
-  OpenCodeRuntime,
-  openCodeRuntimeErrorDetail,
-  type OpenCodeInventory,
-  type OpenCodeRuntimeError,
-} from "../opencodeRuntime.ts";
+import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import { OPENCODE_2_UNSUPPORTED_MESSAGE, type ProbedOpenCode } from "../opencodeVersionProbe.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
@@ -255,7 +249,9 @@ function openCodeCapabilitiesForModel(input: {
   });
 }
 
-function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerProviderModel> {
+function flattenOpenCodeModels(
+  input: OpenCodeRuntime.OpenCodeInventory,
+): ReadonlyArray<ServerProviderModel> {
   const connected = new Set(input.providerList.connected);
   const models: Array<ServerProviderModel> = [];
 
@@ -294,7 +290,7 @@ function trimOptional(value: string | null | undefined): string | undefined {
 }
 
 export function openCodeSkillsToServerProviderSkills(
-  input: OpenCodeInventory["skills"] | undefined,
+  input: OpenCodeRuntime.OpenCodeInventory["skills"] | undefined,
 ): ReadonlyArray<ServerProviderSkill> {
   const skills: ServerProviderSkill[] = [];
   for (const skill of input ?? []) {
@@ -317,7 +313,7 @@ export function openCodeSkillsToServerProviderSkills(
 }
 
 export function openCodeCommandsToServerProviderSlashCommands(
-  input: OpenCodeInventory["commands"],
+  input: OpenCodeRuntime.OpenCodeInventory["commands"],
 ): ReadonlyArray<ServerProviderSlashCommand> {
   const commands: ServerProviderSlashCommand[] = [COMPACT_SLASH_COMMAND];
   const names = new Set([COMPACT_SLASH_COMMAND.name]);
@@ -389,13 +385,13 @@ export const makePendingOpenCodeProvider = (
 export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatus")(function* (
   openCodeSettings: OpenCodeSettings,
   cwd: string,
-  probeRuntime: Effect.Effect<ProbedOpenCode, OpenCodeRuntimeError>,
+  probeRuntime: Effect.Effect<ProbedOpenCode, OpenCodeRuntime.OpenCodeRuntimeError>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  OpenCodeRuntime | OpenCodeServerOwner.OpenCodeServerOwner
+  OpenCodeRuntime.OpenCodeRuntime | OpenCodeServerOwner.OpenCodeServerOwner
 > {
-  const openCodeRuntime = yield* OpenCodeRuntime;
+  const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
   const serverOwner = yield* OpenCodeServerOwner.OpenCodeServerOwner;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const customModels = openCodeSettings.customModels;
@@ -448,7 +444,11 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   const probedExit = yield* Effect.exit(
     probeRuntime.pipe(
       Effect.mapError(
-        (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
+        (cause) =>
+          new OpenCodeProbeError({
+            cause,
+            detail: OpenCodeRuntime.openCodeRuntimeErrorDetail(cause),
+          }),
       ),
     ),
   );
@@ -471,7 +471,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     });
   }
   let version: string | null = probed.version;
-  if (compareSemverVersions(probed.version, MINIMUM_OPENCODE_VERSION) < 0) {
+  if (compareSemverVersions(probed.version, OpenCodeRuntime.MINIMUM_OPENCODE_VERSION) < 0) {
     return buildServerProvider({
       presentation: OPENCODE_PRESENTATION,
       enabled: openCodeSettings.enabled,
@@ -482,7 +482,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         version: probed.version,
         status: "error",
         auth: { status: "unknown" },
-        message: `OpenCode v${probed.version} is too old. Upgrade to v${MINIMUM_OPENCODE_VERSION} or newer.`,
+        message: `OpenCode v${probed.version} is too old. Upgrade to v${OpenCodeRuntime.MINIMUM_OPENCODE_VERSION} or newer.`,
       },
     });
   }
@@ -516,7 +516,11 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   const inventoryExit = yield* Effect.exit(
     inventoryEffect.pipe(
       Effect.mapError(
-        (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
+        (cause) =>
+          new OpenCodeProbeError({
+            cause,
+            detail: OpenCodeRuntime.openCodeRuntimeErrorDetail(cause),
+          }),
       ),
     ),
   );

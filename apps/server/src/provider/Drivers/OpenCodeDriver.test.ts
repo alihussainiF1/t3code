@@ -8,15 +8,11 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient } from "effect/unstable/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import { ServerConfig } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
-import {
-  OpenCodeRuntime,
-  OpenCodeRuntimeError,
-  type OpenCodeRuntimeShape,
-} from "../opencodeRuntime.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
+import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import { OPENCODE_2_UNSUPPORTED_MESSAGE } from "../opencodeVersionProbe.ts";
 import { OpenCodeDriver } from "./OpenCodeDriver.ts";
 
@@ -24,7 +20,12 @@ const serverStarts: Array<string> = [];
 const reachedServer = (operation: string) =>
   Effect.sync(() => serverStarts.push(operation)).pipe(
     Effect.andThen(
-      Effect.fail(new OpenCodeRuntimeError({ operation, detail: "reached a 1.x server path" })),
+      Effect.fail(
+        new OpenCodeRuntime.OpenCodeRuntimeError({
+          operation,
+          detail: "reached a 1.x server path",
+        }),
+      ),
     ),
   );
 // Reports OpenCode 2 from `--version`; any attempt to reach a server is recorded and refused.
@@ -32,15 +33,18 @@ const openCode2Runtime = {
   runOpenCodeCommand: () => Effect.succeed({ stdout: "opencode v2.0.18\n", stderr: "", code: 0 }),
   startOpenCodeServerProcess: () => reachedServer("start"),
   connectToOpenCodeServer: () => reachedServer("connect"),
-} as unknown as OpenCodeRuntimeShape;
+} as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
 
 const layer = Layer.mergeAll(
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-opencode-driver-" }),
   IdAllocator.layer,
-  ServerSettingsService.layerTest(),
+  ServerSettings.layerTest(),
   Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
-  Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
-  Layer.succeed(OpenCodeRuntime, openCode2Runtime),
+  Layer.succeed(
+    ProviderEventLoggers.ProviderEventLoggers,
+    ProviderEventLoggers.NoOpProviderEventLoggers,
+  ),
+  Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, openCode2Runtime),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) =>
