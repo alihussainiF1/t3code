@@ -206,7 +206,12 @@ const replayHttpClient = (
  */
 export const replayServer = (
   transcript: ProviderReplayTranscript,
-  options?: { readonly external?: boolean; readonly replayGate?: ProviderReplayGate },
+  options?: {
+    readonly external?: boolean;
+    readonly replayGate?: ProviderReplayGate;
+    /** Counts the connections currently lent out, as the server owner's borrowers. */
+    readonly borrowers?: { current: number };
+  },
 ) =>
   Effect.gen(function* () {
     const controller = new OpenCodeReplayController(transcript);
@@ -228,13 +233,33 @@ export const replayServer = (
       version: transcript.version,
       external: options?.external ?? false,
     };
-    return OpenCode2Server.OpenCode2Server.of({ withConnection: (use) => use(connection) });
+    const borrowers = options?.borrowers;
+    return OpenCode2Server.OpenCode2Server.of({
+      withConnection: (use) =>
+        borrowers === undefined
+          ? use(connection)
+          : Effect.acquireUseRelease(
+              Effect.sync(() => {
+                borrowers.current += 1;
+              }),
+              () => use(connection),
+              () =>
+                Effect.sync(() => {
+                  borrowers.current -= 1;
+                }),
+            ),
+    });
   });
 
 /** The 2.x adapter over a replayed server. */
 const makeReplayAdapter = (
   transcript: ProviderReplayTranscript,
-  options?: { readonly external?: boolean; readonly replayGate?: ProviderReplayGate },
+  options?: {
+    readonly external?: boolean;
+    readonly replayGate?: ProviderReplayGate;
+    /** Counts the connections currently lent out, as the server owner's borrowers. */
+    readonly borrowers?: { current: number };
+  },
 ) =>
   Effect.gen(function* () {
     const server = yield* replayServer(transcript, options);
@@ -265,7 +290,7 @@ function makeRegistryLayer(
  */
 export const openCode2ReplayRuntime = (
   entries: ReadonlyArray<ProviderReplayEntry>,
-  options?: { readonly external?: boolean },
+  options?: { readonly external?: boolean; readonly borrowers?: { current: number } },
 ) =>
   Effect.gen(function* () {
     const adapter = yield* makeReplayAdapter(
