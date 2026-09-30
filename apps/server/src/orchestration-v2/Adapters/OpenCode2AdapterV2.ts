@@ -343,6 +343,7 @@ interface PendingRequest {
   readonly request: OrchestrationV2RuntimeRequest;
   readonly item: OrchestrationV2TurnItem;
   readonly node: OrchestrationV2ExecutionNode;
+  /** The thread the request is shown on: the asking session's, or its parent's. */
   readonly state: ThreadState;
   readonly turn: ActiveTurn;
   /** The session that asked: the thread's own, or one of its subagents'. */
@@ -2807,11 +2808,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // OpenCode's own "always" saves a grant for the whole project, so a
           // session-wide answer is a rule on this session instead. The grant
           // is best effort: this request is answered either way.
+          // The session that asked waits on the answer and holds the grant: a
+          // subagent's own, not its parent's.
+          const asker = threads.get(entry.sessionId) ?? entry.state;
           if (
             native.type === "permission" &&
             (decision === "acceptForSession" || decision === "acceptAlways")
           ) {
-            const { state } = entry;
+            const state = asker;
             for (const resource of native.save) {
               if (
                 !state.grants.some(
@@ -2821,7 +2825,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 state.grants.push({ action: native.action, resource, effect: "allow" });
               }
             }
-            yield* writeRules(state, state.policy).pipe(Effect.ignore({ log: true }));
+            // A subagent runs under its thread's mode.
+            yield* writeRules(state, rootOf(state).policy).pipe(Effect.ignore({ log: true }));
           }
           const sessionID = Session.ID.make(entry.sessionId);
           // Best effort: the decline stands without the note.
@@ -2861,7 +2866,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 ).pipe(Effect.catchTags(formGone)),
               );
           yield* forgetRequest(entry);
-          if (!delivered) yield* abandonRequest(entry.state, "answer not delivered");
+          if (!delivered) yield* abandonRequest(asker, "answer not delivered");
         }).pipe(
           Effect.mapError((cause) =>
             isProviderAdapterError(cause)

@@ -1196,6 +1196,110 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
+  /**
+   * A supervised foreground subagent that asks to run `echo FIRST`: the
+   * child is announced and named by the parent's call, then asks.
+   */
+  const subagentAsks = (child: string): ReadonlyArray<ProviderReplayEntry> => {
+    const call = "call-subagent";
+    const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: call };
+    return [
+      out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+      promptAccepted,
+      event("session.execution.started", { sessionID: SESSION }),
+      event("session.tool.input.started", { ...tool, name: "subagent" }),
+      event("session.tool.called", {
+        ...tool,
+        name: "subagent",
+        input: { description: "Echo", prompt: "echo" },
+        executed: false,
+      }),
+      event("session.created", { ...childCreated(child), title: "Echo" }),
+      event("session.tool.progress", {
+        ...tool,
+        metadata: { sessionID: child, status: "running" },
+      }),
+      event("session.execution.started", { sessionID: child }),
+      event("permission.asked", { ...shellAsk.data, sessionID: child }),
+    ];
+  };
+
+  it.effect("keeps a subagent's 'allow this session' in the subagent's own rules", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          ...subagentAsks(CHILD),
+          // The subagent's session asked, so the grant is its rule, not the parent's.
+          // Supervised rules for the subagent's own agent (`general`, which lists
+          // no path rules here) with the grant.
+          out("session.update", {
+            sessionID: CHILD,
+            permissions: [
+              ...supervisedRules.slice(0, 3),
+              { action: "shell", resource: "echo *", effect: "allow" },
+            ],
+          }),
+          reply("session.update", null),
+          out("permission.reply", {
+            sessionID: CHILD,
+            requestID: shellAsk.data.id,
+            decision: "once",
+          }),
+          reply("permission.reply", null),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { supervised: true },
+      );
+      const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...withLineage(thread),
+        runtimePolicy: policy("approval-required"),
+      });
+      const request = yield* Fiber.join(requested);
+      yield* runtime.respondToRuntimeRequest({
+        requestId: request!.id,
+        decision: "acceptForSession",
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("stops the subagent whose request's answer cannot be delivered", () =>
+    Effect.gen(function* () {
+      const replyOut = out("permission.reply", {
+        sessionID: CHILD,
+        requestID: shellAsk.data.id,
+        decision: "once",
+      });
+      const failedReply = reply("permission.reply", {
+        status: 500,
+        body: { _tag: "UnknownError", message: "reply failed" },
+      });
+      const { runtime, thread } = yield* resumed(
+        [
+          ...subagentAsks(CHILD),
+          replyOut,
+          failedReply,
+          replyOut,
+          failedReply,
+          // The subagent's session is the one waiting on the answer.
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+        ],
+        { supervised: true },
+      );
+      const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...withLineage(thread),
+        runtimePolicy: policy("approval-required"),
+      });
+      const request = yield* Fiber.join(requested);
+      yield* runtime.respondToRuntimeRequest({ requestId: request!.id, decision: "accept" });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps 'allow this session' in the session's rules, not OpenCode's saved grants", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed(
