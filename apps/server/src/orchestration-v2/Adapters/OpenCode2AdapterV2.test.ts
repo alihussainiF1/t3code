@@ -34,6 +34,7 @@ import type {
   ProviderAdapterV2SessionRuntime,
 } from "../ProviderAdapter.ts";
 import * as IdAllocator from "../IdAllocator.ts";
+import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import { OPENCODE_PROVIDER } from "./OpenCodeAdapterV2.ts";
 import { OPENCODE_2_STILL_STOPPING } from "./OpenCode2AdapterV2.ts";
 import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
@@ -674,6 +675,133 @@ describe("OpenCode2 adapter", () => {
       // The follow-up execution OpenCode will start for the report is still to come.
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
       assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("stops a nested background subagent's report on its own parent's session", () =>
+    Effect.gen(function* () {
+      const MIDDLE = "ses_middle0000000000000000000";
+      const GRANDCHILD = "ses_grandchild00000000000000";
+      const tool = (session: string, id: string) => ({
+        sessionID: session,
+        assistantMessageID: `msg_assistant_${id}`,
+        id,
+      });
+      const report = {
+        inboxID: "msg_nested_report",
+        sessionID: MIDDLE,
+        item: {
+          type: "synthetic",
+          payload: {
+            text: `<subagent sessionID="${GRANDCHILD}" state="cancelled" description="Deep">\n</subagent>`,
+            description: "Deep",
+            metadata: {
+              source: "subagent",
+              childID: GRANDCHILD,
+              agent: "General",
+              state: "cancelled",
+            },
+          },
+          delivery: "steer",
+        },
+      };
+      const offered = yield* Deferred.make<void>();
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        // The thread's model starts a background subagent...
+        event("session.tool.input.started", { ...tool(SESSION, "call-middle"), name: "subagent" }),
+        event("session.tool.called", {
+          ...tool(SESSION, "call-middle"),
+          name: "subagent",
+          input: { description: "Middle", prompt: "delegate", background: true },
+          executed: false,
+        }),
+        event("session.created", { ...childCreated(MIDDLE), title: "Middle" }),
+        event("session.tool.progress", {
+          ...tool(SESSION, "call-middle"),
+          metadata: { sessionID: MIDDLE, status: "running" },
+        }),
+        event("session.execution.started", { sessionID: MIDDLE }),
+        // ...which starts one of its own in the background.
+        event("session.tool.input.started", { ...tool(MIDDLE, "call-deep"), name: "subagent" }),
+        event("session.tool.called", {
+          ...tool(MIDDLE, "call-deep"),
+          name: "subagent",
+          input: { description: "Deep", prompt: "sleep", background: true },
+          executed: false,
+        }),
+        event("session.created", {
+          ...childCreated(GRANDCHILD),
+          parentID: MIDDLE,
+          title: "Deep",
+        }),
+        event("session.tool.progress", {
+          ...tool(MIDDLE, "call-deep"),
+          metadata: { sessionID: GRANDCHILD, status: "running" },
+        }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant_root",
+          ordinal: 0,
+          text: "Launched.",
+        }),
+        // A Stop on the thread interrupts both background subagents.
+        out("session.interrupt", { sessionID: MIDDLE }),
+        reply("session.interrupt", { interrupted: true }),
+        out("session.interrupt", { sessionID: GRANDCHILD }),
+        reply("session.interrupt", { interrupted: true }),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: SESSION }),
+        event("session.execution.interrupted", { sessionID: MIDDLE }),
+        // OpenCode still reports the stopped grandchild to the middle session
+        // and wakes it; that execution is stopped, not run as a subagent turn.
+        event("session.inbox.enqueued", report),
+        event("session.execution.started", { sessionID: MIDDLE }),
+        out("session.interrupt", { sessionID: MIDDLE }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: MIDDLE }),
+        // Later OpenCode runs the thread's own session by itself: a follow-up
+        // T3 offers a turn for, which marks that everything above was handled.
+        event("session.execution.started", { sessionID: SESSION }),
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: () => Deferred.succeed(offered, undefined).pipe(Effect.asVoid),
+          take: Effect.never,
+        }),
+      );
+      const launched = yield* Deferred.make<void>();
+      const middleTurns: Array<string> = [];
+      yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          Effect.gen(function* () {
+            if (
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.nativeTurnRef?.nativeId?.startsWith(`${MIDDLE}:turn:`) === true
+            ) {
+              middleTurns.push(event.providerTurn.nativeTurnRef.nativeId);
+            }
+            if (event.type === "turn_item.updated" && event.turnItem.type === "assistant_message") {
+              yield* Deferred.succeed(launched, undefined);
+            }
+          }),
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* Deferred.await(launched);
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      // The report wakes the middle session; the adapter stops that execution
+      // (the replay fails on any other request) and opens no turn for it.
+      yield* Deferred.await(offered);
+      assert.deepEqual([...new Set(middleTurns)], [`${MIDDLE}:turn:1`]);
     }).pipe(Effect.scoped),
   );
 

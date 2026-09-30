@@ -738,12 +738,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     /**
      * Work that outlives the thread's turn: background subagents, held
-     * executions, and reports OpenCode queued for the follow-up it will start.
+     * executions, and reports OpenCode queued for the follow-up it will start,
+     * on the thread's own session or on a subagent's for a nested one.
      */
     const hasBackground = (state: ThreadState) =>
       state.wakes.length > 0 ||
       state.reports.size > 0 ||
-      runningCalls(state).some((call) => call.background);
+      runningCalls(state).some(
+        (call) => call.background || (call.child !== undefined && call.child.reports.size > 0),
+      );
 
     const setSessionStatus = (
       status: OrchestrationV2ProviderSession["status"],
@@ -1903,7 +1906,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      * held for the continuation turn it asks for, or stopped when it only
      * reports subagents a Stop ended.
      */
-    const onWake = Effect.fnUntraced(function* (state: ThreadState) {
+    /**
+     * Takes the reports an execution OpenCode started on its own delivers. When
+     * they all report subagents a Stop ended, that execution only answers the
+     * Stop, so it is stopped and `stopped` is true.
+     */
+    const takeReports = Effect.fnUntraced(function* (state: ThreadState) {
       const delivered = [...state.reports.values()];
       state.reports.clear();
       const stopped =
@@ -1915,8 +1923,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         yield* client.session
           .interrupt({ sessionID: Session.ID.make(state.sessionId) })
           .pipe(Effect.timeout(INTERRUPT_TIMEOUT), Effect.ignore({ log: true }));
-        return;
       }
+      return { delivered, stopped };
+    });
+
+    const onWake = Effect.fnUntraced(function* (state: ThreadState) {
+      const { delivered, stopped } = yield* takeReports(state);
+      if (stopped) return;
       const wake: Wake = {
         events: [],
         running: true,
@@ -2125,8 +2138,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       const started =
         event.type === "session.execution.started" || event.type === "unreadable.execution.started";
-      // Each execution of a subagent's session is a turn on its child thread.
+      // Each execution of a subagent's session is a turn on its child thread,
+      // unless it only answers the reports of nested subagents a Stop ended.
       if (state.subagent !== undefined && state.active === undefined && started) {
+        if ((yield* takeReports(state)).stopped) return;
         return yield* startChildTurn(state);
       }
       const turn = state.active;
@@ -2419,6 +2434,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      */
     const stopBackground = Effect.fnUntraced(function* (state: ThreadState) {
       const calls = runningCalls(state).filter((call) => call.background);
+      // Every session under the thread that a stopped subagent reports to.
+      const callers = [state, ...runningCalls(state).flatMap((call) => call.child ?? [])];
       // OpenCode announces a child's session before the call's progress names
       // it, so a call without a child yet is stopped through its caller's
       // announced children.
@@ -2426,13 +2443,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         [...announced.values()].flatMap((info) =>
           info.parentID === caller.sessionId ? [info.sessionID] : [],
         );
-      const children = new Set(
+      // Each child reports to the session that called it, so its marker goes
+      // on that caller's state: the thread's own, or a subagent's for a nested one.
+      const children = new Map(
         calls.flatMap((call) =>
-          call.child === undefined ? announcedTo(call.state) : [call.child.sessionId],
+          (call.child === undefined ? announcedTo(call.state) : [call.child.sessionId]).map(
+            (childId) => [childId, call.state] as const,
+          ),
         ),
       );
-      for (const childId of children) {
-        state.stoppedChildren.add(childId);
+      for (const [childId, caller] of children) {
+        caller.stoppedChildren.add(childId);
         yield* client.session
           .interrupt({ sessionID: Session.ID.make(childId) })
           .pipe(Effect.timeout(INTERRUPT_TIMEOUT), Effect.ignore({ log: true }));
@@ -2441,7 +2462,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         Effect.gen(function* () {
           for (const call of calls) yield* settleCall(call, "interrupted");
           // A report already queued starts a follow-up the Stop must end too.
-          for (const report of state.reports.values()) state.stoppedChildren.add(report.childId);
+          for (const caller of callers) {
+            for (const report of caller.reports.values()) {
+              caller.stoppedChildren.add(report.childId);
+            }
+          }
           // A held wake no turn will take: its execution is stopped, not replayed.
           const running = state.wakes.some((wake) => wake.running);
           for (const wake of state.wakes.splice(0)) wake.dropped = true;
