@@ -329,7 +329,10 @@ const checkProvider = Effect.fn("checkProvider")(function* (
   cwd = process.cwd(),
   environment?: NodeJS.ProcessEnv,
   server = replayOpenCodeServer(OPENCODE_1_RESPONSES, settings.serverPassword),
-  openCode2Models: ReadonlyArray<OpenCode2Model> = [],
+  openCode2Models: Effect.Effect<
+    ReadonlyArray<OpenCode2Model>,
+    OpenCodeRuntime.OpenCodeRuntimeError
+  > = Effect.succeed([]),
 ) {
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -343,12 +346,9 @@ const checkProvider = Effect.fn("checkProvider")(function* (
         Effect.provideService(HttpClient.HttpClient, server),
         Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
       );
-      return yield* checkOpenCodeProviderStatus(
-        settings,
-        cwd,
-        probe,
-        Effect.succeed(openCode2Models),
-      ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner));
+      return yield* checkOpenCodeProviderStatus(settings, cwd, probe, openCode2Models).pipe(
+        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
+      );
     }),
   );
 });
@@ -543,7 +543,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         process.cwd(),
         undefined,
         undefined,
-        [
+        Effect.succeed([
           { providerID: "opencode", id: "big-pickle", name: "Big Pickle", variants: [] },
           {
             providerID: "opencode",
@@ -551,7 +551,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
             name: "Space Bunny Free",
             variants: [{ id: "low" }, { id: "medium" }, { id: "high" }],
           },
-        ],
+        ]),
       );
 
       NodeAssert.equal(snapshot.status, "ready");
@@ -568,6 +568,27 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         ["low", "medium", "high"],
       );
       NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
+    }),
+  );
+
+  it.effect("reports a failed OpenCode 2 model list without the server's response", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode v2.0.18\n";
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings(),
+        process.cwd(),
+        undefined,
+        undefined,
+        Effect.fail(
+          new OpenCodeRuntime.OpenCodeRuntimeError({
+            operation: "model.list",
+            detail: 'status=500 body={"token":"leaked-response-body"}',
+          }),
+        ),
+      );
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.message, "OpenCode could not load its model list.");
     }),
   );
 
