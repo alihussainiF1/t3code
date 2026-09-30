@@ -461,6 +461,19 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  /** A subagent's session as 2.0.18 announced it in the spike's `background` run. */
+  const childCreated = (child: string) => ({
+    sessionID: child,
+    slug: "proud-canyon",
+    version: "2.0.18",
+    projectID: "global",
+    parentID: SESSION,
+    location: { directory: WORK },
+    subpath: "",
+    title: "Sleep",
+    agent: "general",
+    model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+  });
   /** A turn whose model launched a background subagent that still runs. */
   const backgroundLaunch = (child: string): ReadonlyArray<ProviderReplayEntry> => {
     const call = "call-background";
@@ -476,13 +489,7 @@ describe("OpenCode2 adapter", () => {
         input: { description: "Sleep", prompt: "sleep", background: true },
         executed: false,
       }),
-      event("session.created", {
-        sessionID: child,
-        parentID: SESSION,
-        location: { directory: WORK },
-        title: "Sleep",
-        agent: "general",
-      }),
+      event("session.created", childCreated(child)),
       event("session.tool.progress", {
         ...tool,
         metadata: { sessionID: child, status: "running" },
@@ -562,6 +569,63 @@ describe("OpenCode2 adapter", () => {
         requestRuntimeRestart: true,
       });
       assert.equal((yield* watch.terminal)?.status, "interrupted");
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("stops a background subagent announced before its call named it", () =>
+    Effect.gen(function* () {
+      const call = "call-background";
+      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: call };
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.tool.input.started", { ...tool, name: "subagent" }),
+        event("session.tool.called", {
+          ...tool,
+          name: "subagent",
+          input: { description: "Sleep", prompt: "sleep", background: true },
+          executed: false,
+        }),
+        // OpenCode announces the child before the call's progress names it.
+        event("session.created", childCreated(CHILD)),
+        // Emitted after the announcement, so the Stop comes after it too.
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant",
+          ordinal: 0,
+          text: "Launched.",
+        }),
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", { interrupted: true }),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: SESSION }),
+      ]);
+      const announced = yield* Deferred.make<void>();
+      const terminal = yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? Deferred.succeed(announced, undefined)
+            : Effect.void,
+        ),
+        Stream.filter(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+            event.type === "turn.terminal",
+        ),
+        Stream.runHead,
+        Effect.map(Option.getOrUndefined),
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* Deferred.await(announced);
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.scoped),
   );

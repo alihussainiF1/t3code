@@ -2413,12 +2413,22 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      */
     const stopBackground = Effect.fnUntraced(function* (state: ThreadState) {
       const calls = runningCalls(state).filter((call) => call.background);
-      for (const call of calls) {
-        const child = call.child;
-        if (child === undefined) continue;
-        state.stoppedChildren.add(child.sessionId);
+      // OpenCode announces a child's session before the call's progress names
+      // it, so a call without a child yet is stopped through its caller's
+      // announced children.
+      const announcedTo = (caller: ThreadState) =>
+        [...announced.values()].flatMap((info) =>
+          info.parentID === caller.sessionId ? [info.sessionID] : [],
+        );
+      const children = new Set(
+        calls.flatMap((call) =>
+          call.child === undefined ? announcedTo(call.state) : [call.child.sessionId],
+        ),
+      );
+      for (const childId of children) {
+        state.stoppedChildren.add(childId);
         yield* client.session
-          .interrupt({ sessionID: Session.ID.make(child.sessionId) })
+          .interrupt({ sessionID: Session.ID.make(childId) })
           .pipe(Effect.timeout(INTERRUPT_TIMEOUT), Effect.ignore({ log: true }));
       }
       yield* lock.withPermit(
