@@ -1298,12 +1298,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       state.active = undefined;
       // OpenCode drops a request when the asking session's execution ends. A
       // subagent's request shown on this turn ends with it too, unless the
-      // subagent runs in the background past a finished turn.
+      // subagent runs in the background past a turn that did not fail.
       for (const entry of pending.values()) {
         const background = callsAbove(entry.sessionId).some((call) => call.background);
         if (
           entry.sessionId === state.sessionId ||
-          (entry.turn === turn && !(background && terminal.status === "completed"))
+          (entry.turn === turn && !(background && terminal.status !== "failed"))
         ) {
           yield* settleRequest(entry, "cancelled");
         }
@@ -1322,11 +1322,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         );
       }
       // A foreground subagent ends with the turn that waits on it. A background
-      // one outlives a finished turn, and a stopped or failed turn stops it.
+      // one outlives a finished or interrupted turn (a user Stop has already
+      // stopped it), and a failed turn stops it.
       // A snapshot: settling a call removes it from the map.
       for (const call of Array.from(state.calls.values())) {
         if (call.turn !== turn) continue;
-        if (call.background && terminal.status === "completed") continue;
+        if (call.background && terminal.status !== "failed") continue;
         yield* settleCall(call, terminal.status === "completed" ? "completed" : terminal.status);
       }
       if (state.subagent !== undefined) {
@@ -2684,9 +2685,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (state === undefined) return;
           const turn = state.active;
           // OpenCode stops a foreground subagent with its parent, but not a
-          // background one: T3 stops those itself, and the execution OpenCode
-          // starts to report them is stopped too.
-          yield* stopBackground(state);
+          // background one: a user Stop (`requestRuntimeRestart`) stops those
+          // too, and the execution OpenCode starts to report them. A turn
+          // interrupted to restart it with new input leaves them running.
+          if (interruptInput.requestRuntimeRestart === true) yield* stopBackground(state);
           if (turn === undefined || turn.providerTurn.id !== interruptInput.providerTurnId) {
             return;
           }
