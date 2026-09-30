@@ -728,9 +728,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       return state.active === undefined ? undefined : { state, turn: state.active };
     };
 
-    /** Background subagents or held executions: work that outlives the thread's turn. */
+    /**
+     * Work that outlives the thread's turn: background subagents, held
+     * executions, and reports OpenCode queued for the follow-up it will start.
+     */
     const hasBackground = (state: ThreadState) =>
-      state.wakes.length > 0 || runningCalls(state).some((call) => call.background);
+      state.wakes.length > 0 ||
+      state.reports.size > 0 ||
+      runningCalls(state).some((call) => call.background);
 
     const setSessionStatus = (
       status: OrchestrationV2ProviderSession["status"],
@@ -2142,6 +2147,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       for (const state of threads.values()) {
         for (const call of runningCalls(state)) yield* settleCall(call, "failed");
         for (const wake of state.wakes.splice(0)) wake.dropped = true;
+        state.reports.clear();
       }
       yield* setSessionStatus("error", message);
       yield* Queue.end(events);
@@ -2416,6 +2422,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* lock.withPermit(
         Effect.gen(function* () {
           for (const call of calls) yield* settleCall(call, "interrupted");
+          // A report already queued starts a follow-up the Stop must end too.
+          for (const report of state.reports.values()) state.stoppedChildren.add(report.childId);
           // A held wake no turn will take: its execution is stopped, not replayed.
           const running = state.wakes.some((wake) => wake.running);
           for (const wake of state.wakes.splice(0)) wake.dropped = true;
@@ -2442,9 +2450,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       hasPendingBackgroundWork: Effect.sync(() =>
         [...threads.values()].some(
           (state) =>
-            state.wakes.length > 0 ||
-            (state.subagent !== undefined && busy.has(state.sessionId)) ||
-            runningCalls(state).some((call) => call.background),
+            hasBackground(state) || (state.subagent !== undefined && busy.has(state.sessionId)),
         ),
       ),
       hasPendingBackgroundWorkForThread: (providerThread) =>

@@ -625,6 +625,53 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("keeps a finished background subagent's queued report as pending work", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        // The child ends; OpenCode queues its report for the parent, and only
+        // then starts the parent's follow-up execution.
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.inbox.enqueued", {
+          inboxID: "msg_report",
+          sessionID: SESSION,
+          item: {
+            type: "synthetic",
+            payload: {
+              text: `<subagent sessionID="${CHILD}" state="completed" description="Sleep">\nCHILD_OK\n</subagent>`,
+              description: "Sleep",
+              metadata: {
+                source: "subagent",
+                childID: CHILD,
+                agent: "General",
+                state: "completed",
+              },
+            },
+            delivery: "steer",
+          },
+        }),
+        // Emitted once the report is in, so the check below runs in the gap.
+        event("session.usage.updated", { sessionID: SESSION }),
+      ]);
+      const reported = yield* Deferred.make<void>();
+      yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          event.type === "subagent.updated" && event.subagent.status === "completed"
+            ? Deferred.succeed(reported, undefined)
+            : Effect.void,
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* Deferred.await(reported);
+      // The follow-up execution OpenCode will start for the report is still to come.
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
   /** A prompt accepted, then a Stop the server never answers, advanced past its timeout. */
   const stopTimedOut: ReadonlyArray<ProviderReplayEntry> = [
     out("session.prompt", { sessionID: SESSION, text: "<any>" }),
