@@ -62,10 +62,7 @@ const event = (type: string, data: Record<string, unknown>): ProviderReplayEntry
 const durable = { durable: { aggregateID: SESSION, seq: 1, version: 1 } };
 
 /** The rules T3 gives every session it runs. */
-const t3Rules = [
-  { action: "*", resource: "*", effect: "allow" },
-  { action: "subagent", resource: "*", effect: "deny" },
-];
+const t3Rules = [{ action: "*", resource: "*", effect: "allow" }];
 const sessionInfo = (overrides: Record<string, unknown> = {}) => ({
   id: SESSION,
   permissions: t3Rules,
@@ -204,7 +201,6 @@ const supervisedRules = [
   { action: "edit", resource: "*", effect: "ask" },
   { action: "external_directory", resource: "*", effect: "ask" },
   ...buildPaths,
-  { action: "subagent", resource: "*", effect: "deny" },
 ];
 
 // The first ask and question form the spike recorded (recordings/permission, question).
@@ -417,26 +413,6 @@ describe("OpenCode2 adapter", () => {
             event.turnItem.text === "DONE",
         ),
       );
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("denies the subagent tool on the sessions it creates", () =>
-    Effect.gen(function* () {
-      const runtime = yield* openCode2ReplayRuntime([
-        ...opening,
-        out("session.create", {
-          location: { directory: WORK },
-          model: { providerID: "opencode", id: "big-pickle" },
-          permissions: t3Rules,
-        }),
-        replyData("session.create", sessionInfo()),
-      ]);
-      const thread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection: bigPickle,
-        runtimePolicy: policy(),
-      });
-      assert.equal(thread.nativeThreadRef?.nativeId, SESSION);
     }).pipe(Effect.scoped),
   );
 
@@ -724,10 +700,15 @@ describe("OpenCode2 adapter", () => {
       const runtime = yield* openCode2ReplayRuntime([
         ...opening,
         out("session.get", { sessionID: SESSION }),
-        // Made before the subagent rule: it still allows everything.
+        // Made by an earlier build that denied subagents; resuming drops the deny.
         replyData(
           "session.get",
-          sessionInfo({ permissions: [{ action: "*", resource: "*", effect: "allow" }] }),
+          sessionInfo({
+            permissions: [
+              { action: "*", resource: "*", effect: "allow" },
+              { action: "subagent", resource: "*", effect: "deny" },
+            ],
+          }),
         ),
         ...noOpenRequests,
         out("session.update", { sessionID: SESSION, permissions: t3Rules }),
