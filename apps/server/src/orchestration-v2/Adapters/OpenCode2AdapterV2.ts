@@ -55,6 +55,7 @@ import {
 } from "../../provider/opencodeRuntime.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { causeErrorTag } from "@t3tools/shared/observability";
 
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import * as IdAllocator from "../IdAllocator.ts";
@@ -1327,10 +1328,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             schedule: Schedule.spaced("250 millis"),
           }),
           Effect.timeout("5 seconds"),
-          Effect.tapError((cause) =>
-            Effect.logWarning("Could not list OpenCode agents; their path rules are skipped.", {
+          // The failure can carry the server's URL or response text, so only its
+          // tag is annotated; the full failure stays in the log's cause.
+          Effect.tapCause((cause) =>
+            Effect.logWarning(
+              "Could not list OpenCode agents; their path rules are skipped.",
               cause,
-            }),
+            ).pipe(Effect.annotateLogs({ errorTag: causeErrorTag(cause) })),
           ),
           Effect.option,
         );
