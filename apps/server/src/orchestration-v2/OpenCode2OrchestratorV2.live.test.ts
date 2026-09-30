@@ -52,7 +52,7 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import { worktreeRepairDependenciesTestLayer } from "./ProviderTurnStartService.testkit.ts";
 import { OrchestrationV2LayerLive } from "./runtimeLayer.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
@@ -236,7 +236,8 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
 
         // A status check starts a fresh server, which lists no models for its
         // first few hundred milliseconds; the picker must still get them.
-        const instance = yield* (yield* ProviderInstanceRegistry).getInstance(INSTANCE);
+        const instance =
+          yield* (yield* ProviderInstanceRegistry.ProviderInstanceRegistry).getInstance(INSTANCE);
         assert.isDefined(instance);
         const status = yield* instance!.snapshot.refresh;
         assert.equal(status.status, "ready");
