@@ -44,6 +44,7 @@ catalog:
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
   "@types/node": 24.12.4
+  croner: 10.0.1
   effect: 4.0.0-rc.115
   jose: 6.2.2
   lightningcss: 1.33.0

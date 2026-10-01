@@ -42,6 +42,7 @@ import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
+  CalendarClockIcon,
   ChartNoAxesColumnIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
@@ -2065,6 +2066,33 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.pullRequest className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({ to: "/pull-requests", search: readPullRequestListPreferences() });
+      },
+    });
+  }
+
+  if (
+    environments.some(
+      (environment) => environment.serverConfig?.environment.capabilities.automations === true,
+    )
+  ) {
+    actionItems.push({
+      kind: "action",
+      value: "action:automations",
+      searchTerms: ["automations", "schedule", "cron", "recurring", "scheduled runs"],
+      title: "Open automations",
+      icon: <CalendarClockIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/automations" });
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:new-automation",
+      searchTerms: ["new automation", "create automation", "schedule", "cron", "recurring"],
+      title: "New automation",
+      icon: <CalendarClockIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/automations", search: { new: true } });
       },
     });
   }
