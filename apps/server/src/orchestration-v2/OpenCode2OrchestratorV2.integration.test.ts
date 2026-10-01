@@ -206,6 +206,19 @@ const createdSession = (
   reply("session.create", sessionInfo(directory, permissions)),
 ];
 
+/** A recording with its scrubbed `<work>` directory replaced by `directory`. */
+const withDirectory = <T>(value: T, directory: string): T => {
+  const replace = (entry: unknown): unknown =>
+    entry === "<work>"
+      ? directory
+      : Array.isArray(entry)
+        ? entry.map(replace)
+        : typeof entry === "object" && entry !== null
+          ? Object.fromEntries(Object.entries(entry).map(([key, inner]) => [key, replace(inner)]))
+          : entry;
+  return replace(value) as T;
+};
+
 const threadCommands = (input: {
   readonly name: string;
   readonly worktreePath: string;
@@ -540,7 +553,11 @@ describe("OpenCode 2 through the orchestrator", () => {
       const recorded = yield* readProviderReplayTranscript(
         new URL("./testkit/fixtures/opencode2_fork/opencode_transcript.ndjson", import.meta.url),
       );
-      const transcript = yield* OpenCode2OrchestratorReplayHarness.decodeTranscript(recorded);
+      // The recording scrubbed its directory to `<work>`; the fork it answers
+      // runs where its source does, which is this test's workspace.
+      const transcript = yield* OpenCode2OrchestratorReplayHarness.decodeTranscript(
+        withDirectory(recorded, cwd),
+      );
       const source = threadCommands({ name, worktreePath: cwd });
       const target = ThreadId.make(`thread:${name}:target`);
       const [one, two] = [source.message("one"), source.message("two")];

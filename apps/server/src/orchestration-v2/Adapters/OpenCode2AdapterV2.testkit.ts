@@ -86,7 +86,9 @@ const operationOf = (
     if (method === "DELETE" && rest === "/revert") return { type: "session.revert.clear", input };
     const inbox = /^\/inbox\/([^/]+)$/.exec(rest);
     if (method === "DELETE" && inbox !== null) {
-      return { type: "session.inbox.cancel", input: { ...input, inboxID: inbox[1] } };
+      // T3's steer ids carry `:`, which the path encodes.
+      const inboxID = decodeURIComponent(inbox[1] ?? "");
+      return { type: "session.inbox.cancel", input: { ...input, inboxID } };
     }
     if (method === "GET" && rest === "/message") return { type: "message.list", input };
     if (method === "GET" && rest === "/permission") return { type: "permission.list", input };
