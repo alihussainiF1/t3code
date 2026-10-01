@@ -1002,6 +1002,8 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
         15_000,
       );
       if (project === null) {
+        // The project exists, so clearing the name keeps Create from making a `-2` copy.
+        setName("");
         setError(
           "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
         );
