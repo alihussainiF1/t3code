@@ -260,6 +260,21 @@ export function applyThreadDetailEvent(
         },
       };
 
+    case "thread.skills-set": {
+      // Empty means every library skill is enabled; dropped like connectors.
+      const { disabledSkillIds: _previous, ...rest } = thread;
+      return {
+        kind: "updated",
+        thread: {
+          ...rest,
+          ...(event.payload.disabledSkillIds.length > 0
+            ? { disabledSkillIds: event.payload.disabledSkillIds }
+            : {}),
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+    }
+
     case "thread.mcp-connectors-set": {
       // Empty means every connector is enabled; drop the key like the server
       // snapshot does so shells and details stay comparable.

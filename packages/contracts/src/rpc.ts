@@ -35,6 +35,20 @@ import {
   McpConnectorOAuthStartResult,
 } from "./mcpConnector.ts";
 import {
+  SkillDeleteInput,
+  SkillDiscoverInput,
+  SkillDiscoverResult,
+  SkillError,
+  SkillImportInput,
+  SkillInstallInput,
+  SkillInstallResult,
+  SkillReadInput,
+  SkillReadResult,
+  SkillSaveInput,
+  SkillSaveResult,
+  SkillUpdateInput,
+} from "./skill.ts";
+import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
   EnvironmentAuthorizationError,
@@ -402,6 +416,13 @@ export const WS_METHODS = {
   mcpConnectorsImport: "mcpConnectors.import",
   mcpConnectorsOAuthStart: "mcpConnectors.oauthStart",
   mcpConnectorsOAuthDisconnect: "mcpConnectors.oauthDisconnect",
+  skillsInstall: "skills.install",
+  skillsRead: "skills.read",
+  skillsSave: "skills.save",
+  skillsUpdate: "skills.update",
+  skillsDelete: "skills.delete",
+  skillsDiscover: "skills.discover",
+  skillsImport: "skills.import",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetHostResources: "server.getHostResources",
@@ -668,6 +689,43 @@ const WsMcpConnectorsOAuthDisconnectRpc = Rpc.make(WS_METHODS.mcpConnectorsOAuth
   payload: McpConnectorOAuthDisconnectInput,
   success: Schema.Struct({}),
   error: Schema.Union([McpConnectorError, EnvironmentAuthorizationError]),
+});
+
+const SkillRpcError = Schema.Union([SkillError, EnvironmentAuthorizationError]);
+const WsSkillsInstallRpc = Rpc.make(WS_METHODS.skillsInstall, {
+  payload: SkillInstallInput,
+  success: SkillInstallResult,
+  error: SkillRpcError,
+});
+const WsSkillsReadRpc = Rpc.make(WS_METHODS.skillsRead, {
+  payload: SkillReadInput,
+  success: SkillReadResult,
+  error: SkillRpcError,
+});
+const WsSkillsSaveRpc = Rpc.make(WS_METHODS.skillsSave, {
+  payload: SkillSaveInput,
+  success: SkillSaveResult,
+  error: SkillRpcError,
+});
+const WsSkillsUpdateRpc = Rpc.make(WS_METHODS.skillsUpdate, {
+  payload: SkillUpdateInput,
+  success: Schema.Struct({}),
+  error: SkillRpcError,
+});
+const WsSkillsDeleteRpc = Rpc.make(WS_METHODS.skillsDelete, {
+  payload: SkillDeleteInput,
+  success: Schema.Struct({}),
+  error: SkillRpcError,
+});
+const WsSkillsDiscoverRpc = Rpc.make(WS_METHODS.skillsDiscover, {
+  payload: SkillDiscoverInput,
+  success: SkillDiscoverResult,
+  error: EnvironmentAuthorizationError,
+});
+const WsSkillsImportRpc = Rpc.make(WS_METHODS.skillsImport, {
+  payload: SkillImportInput,
+  success: SkillInstallResult,
+  error: SkillRpcError,
 });
 
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1506,6 +1564,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsMcpConnectorsImportRpc,
   WsMcpConnectorsOAuthStartRpc,
   WsMcpConnectorsOAuthDisconnectRpc,
+  WsSkillsInstallRpc,
+  WsSkillsReadRpc,
+  WsSkillsSaveRpc,
+  WsSkillsUpdateRpc,
+  WsSkillsDeleteRpc,
+  WsSkillsDiscoverRpc,
+  WsSkillsImportRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,

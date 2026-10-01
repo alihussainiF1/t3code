@@ -84,6 +84,7 @@ import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { McpConnectorService } from "../../mcp/connectors/McpConnectorService.ts";
+import { SkillLibrary } from "../../skills/SkillLibrary.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -495,6 +496,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const issueMcpCredential =
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
   const mcpConnectorService = yield* Effect.serviceOption(McpConnectorService);
+  const skillLibrary = yield* Effect.serviceOption(SkillLibrary);
   const fileSystem = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
@@ -994,10 +996,35 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ),
     );
 
+  /**
+   * Library skills for this session: enabled, allowed for the provider, and
+   * not turned off on the thread. Resolved before every session start.
+   */
+  const resolveSessionSkills = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
+    Effect.gen(function* () {
+      if (Option.isNone(skillLibrary)) return undefined;
+      const adapter = yield* registry.getByInstance(providerInstanceId);
+      const thread = Option.isSome(projectionQuery)
+        ? yield* projectionQuery.value.getThreadShellById(threadId)
+        : Option.none();
+      return yield* skillLibrary.value.resolveForSession({
+        provider: adapter.provider,
+        disabledForThread: Option.isSome(thread) ? (thread.value.disabledSkillIds ?? []) : [],
+      });
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not resolve skills for this session.", { cause }).pipe(
+          Effect.as(undefined),
+        ),
+      ),
+    );
+
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     Effect.gen(function* () {
       const connectors = yield* resolveMcpConnectors(threadId, providerInstanceId);
       yield* Effect.sync(() => McpProviderSession.setMcpConnectors(threadId, connectors));
+      const skills = yield* resolveSessionSkills(threadId, providerInstanceId);
+      yield* Effect.sync(() => McpProviderSession.setSessionSkills(threadId, skills));
       const capabilities = yield* agentAccessCapabilities(threadId);
       const credential = yield* issueMcpCredential({ threadId, providerInstanceId, capabilities });
       if (credential) {

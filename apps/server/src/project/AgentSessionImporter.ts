@@ -89,6 +89,7 @@ function hasImportBlockingActivity(
     thread.pinOrderKey != null ||
     thread.autoSettleDisabledAt != null ||
     (thread.disabledMcpConnectorIds?.length ?? 0) > 0 ||
+    (thread.disabledSkillIds?.length ?? 0) > 0 ||
     thread.titleRegeneration != null ||
     thread.linkedPullRequest != null ||
     thread.unsettledAt != null ||

@@ -85,6 +85,7 @@ const SKILL_SOURCE_SYMBOL_BY_KIND: Record<ProviderSkillSourceKind, AppSymbolName
   project: "folder",
   personal: "person.crop.circle",
   system: "gearshape",
+  library: { ios: "sparkles", android: "auto_awesome" },
   other: "cube",
 };
 

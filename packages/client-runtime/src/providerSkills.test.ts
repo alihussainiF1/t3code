@@ -9,6 +9,7 @@ import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
   resolveProviderSkillSourceKind,
+  withLibrarySkills,
 } from "./providerSkills.ts";
 
 const provider = {
@@ -250,5 +251,50 @@ describe("workspace provider snapshots", () => {
   it("keeps the machine snapshot before this cwd has a provider snapshot", () => {
     expect(resolveProviderSkillsForCwd(provider, "/workspace/project-b")).toEqual(provider.skills);
     expect(resolveProviderSlashCommandsForCwd(provider, null)).toEqual(provider.slashCommands);
+  });
+});
+
+describe("withLibrarySkills", () => {
+  const library = {
+    pdf: {
+      name: "pdf",
+      description: "Work with PDFs.",
+      enabled: true,
+      source: { type: "local" as const },
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+    review: {
+      name: "Review",
+      description: "Native name clash.",
+      enabled: true,
+      source: { type: "local" as const },
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+    "cursor-only": {
+      name: "cursor-only",
+      description: "Only Cursor.",
+      enabled: true,
+      providers: [ProviderDriverKind.make("cursor")],
+      source: { type: "local" as const },
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+  };
+  const native = [{ name: "review", path: "/native/review/SKILL.md", enabled: true }];
+
+  it("appends the library skills this provider gets on the thread, native names first", () => {
+    const merged = withLibrarySkills(native, library, "codex");
+    expect(merged.map((skill) => skill.name)).toEqual(["review", "pdf"]);
+    expect(merged[1]).toMatchObject({ description: "Work with PDFs.", enabled: true });
+    expect(resolveProviderSkillSourceKind(merged[1]!)).toBe("library");
+    expect(withLibrarySkills(native, library, "cursor").map((skill) => skill.name)).toEqual([
+      "review",
+      "cursor-only",
+      "pdf",
+    ]);
+  });
+
+  it("drops skills the thread turned off and leaves lists alone without a library", () => {
+    expect(withLibrarySkills(native, library, "codex", ["pdf"])).toEqual(native);
+    expect(withLibrarySkills(native, undefined, "codex")).toBe(native);
   });
 });

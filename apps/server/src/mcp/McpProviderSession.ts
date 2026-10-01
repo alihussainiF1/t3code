@@ -1,5 +1,6 @@
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { ResolvedMcpConnector } from "./connectors/McpConnectorTranslators.ts";
+import type { SessionSkills } from "../skills/SkillDelivery.ts";
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
@@ -48,11 +49,13 @@ export function readMcpProviderSession(threadId: ThreadId): McpProviderSessionCo
 export function clearMcpProviderSession(threadId: ThreadId): void {
   sessionsByThread.delete(threadId);
   connectorsByThread.delete(threadId);
+  skillsByThread.delete(threadId);
 }
 
 export function clearAllMcpProviderSessions(): void {
   sessionsByThread.clear();
   connectorsByThread.clear();
+  skillsByThread.clear();
 }
 
 /**
@@ -72,4 +75,20 @@ export function setMcpConnectors(
 
 export function readMcpConnectors(threadId: ThreadId): ReadonlyArray<ResolvedMcpConnector> {
   return connectorsByThread.get(threadId) ?? [];
+}
+
+/**
+ * Library skills resolved for the thread's next provider session, with their
+ * delivery root built. Adapters read this at session start (and ACP adapters
+ * on each prompt) to hand the skills over natively or as an index.
+ */
+const skillsByThread = new Map<ThreadId, SessionSkills>();
+
+export function setSessionSkills(threadId: ThreadId, skills: SessionSkills | undefined): void {
+  if (skills === undefined) skillsByThread.delete(threadId);
+  else skillsByThread.set(threadId, skills);
+}
+
+export function readSessionSkills(threadId: ThreadId): SessionSkills | undefined {
+  return skillsByThread.get(threadId);
 }

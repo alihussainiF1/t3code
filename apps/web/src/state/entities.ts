@@ -9,12 +9,14 @@ import {
   mergeEnvironmentThread,
 } from "@t3tools/client-runtime/state/threads";
 import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
-import type { EnvironmentId, McpConnectorId } from "@t3tools/contracts";
+import type { EnvironmentId, McpConnectorId, SkillId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 import {
   listThreadMcpConnectors,
+  listThreadSkills,
   type ThreadMcpConnectorOption,
+  type ThreadSkillOption,
 } from "../components/threadActionMenu.logic";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
@@ -270,6 +272,19 @@ export function readThreadMcpConnectorOptions(
   const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId);
   if (config?.environment.capabilities.mcpConnectors !== true) return null;
   return listThreadMcpConnectors(config.settings.mcpConnectors, disabledIds);
+}
+
+/**
+ * The per-thread library skill toggles for a thread menu, or null when the
+ * environment's server predates the skill library.
+ */
+export function readThreadSkillOptions(
+  environmentId: EnvironmentId,
+  disabledIds: ReadonlyArray<SkillId> | undefined,
+): ReadonlyArray<ThreadSkillOption> | null {
+  const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId);
+  if (config?.environment.capabilities.skills !== true) return null;
+  return listThreadSkills(config.settings.skills, disabledIds);
 }
 
 export function readEnvironmentSupportsActiveReorder(environmentId: EnvironmentId): boolean {

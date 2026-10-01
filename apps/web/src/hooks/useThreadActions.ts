@@ -9,6 +9,7 @@ import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-se
 import {
   EnvironmentId,
   type McpConnectorId,
+  type SkillId,
   type ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
@@ -236,6 +237,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const setThreadMcpConnectorsMutation = useAtomCommand(threadEnvironment.setMcpConnectors, {
+    reportFailure: false,
+  });
+  const setThreadSkillsMutation = useAtomCommand(threadEnvironment.setSkills, {
     reportFailure: false,
   });
   const reorderPinnedThreadMutation = useAtomCommand(threadEnvironment.reorderPin, {
@@ -642,6 +646,19 @@ export function useThreadActions() {
     [setThreadMcpConnectorsMutation],
   );
 
+  /**
+   * Replaces the set of library skills turned off for one thread; [] re-enables
+   * all. Only offered when the server reports the `skills` capability.
+   */
+  const setThreadSkills = useCallback(
+    (target: ScopedThreadRef, disabledSkillIds: ReadonlyArray<SkillId>) =>
+      setThreadSkillsMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, disabledSkillIds },
+      }),
+    [setThreadSkillsMutation],
+  );
+
   const pinThread = useCallback(
     async (target: ScopedThreadRef, opts: { orderKey?: string } = {}) => {
       // Version skew: never send the command to a server that predates it.
@@ -963,6 +980,7 @@ export function useThreadActions() {
       reorderActiveThread,
       setThreadAutoSettle,
       setThreadMcpConnectors,
+      setThreadSkills,
     }),
     [
       archiveThread,
@@ -974,6 +992,7 @@ export function useThreadActions() {
       reorderActiveThread,
       setThreadAutoSettle,
       setThreadMcpConnectors,
+      setThreadSkills,
       settleThread,
       snoozeThread,
       unarchiveThread,

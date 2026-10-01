@@ -14,6 +14,7 @@ import {
 } from "../Services/ProjectionThreads.ts";
 import {
   McpConnectorId,
+  SkillId,
   ModelSelection,
   ThreadLinkedPullRequest,
   ThreadTitleState,
@@ -26,6 +27,7 @@ const ProjectionThreadDbRow = ProjectionThread.mapFields(
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     branchPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     disabledMcpConnectorIds: Schema.NullOr(Schema.fromJsonString(Schema.Array(McpConnectorId))),
+    disabledSkillIds: Schema.NullOr(Schema.fromJsonString(Schema.Array(SkillId))),
   }),
 );
 
@@ -62,6 +64,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           active_order_key,
           auto_settle_disabled_at,
           disabled_mcp_connector_ids_json,
+          disabled_skill_ids_json,
           title_regeneration_request_id,
           title_regeneration_started_at,
           latest_user_message_at,
@@ -96,6 +99,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.activeOrderKey ?? null},
           ${row.autoSettleDisabledAt ?? null},
           ${row.disabledMcpConnectorIds == null || row.disabledMcpConnectorIds.length === 0 ? null : JSON.stringify(row.disabledMcpConnectorIds)},
+          ${row.disabledSkillIds == null || row.disabledSkillIds.length === 0 ? null : JSON.stringify(row.disabledSkillIds)},
           ${row.titleRegenerationRequestId ?? null},
           ${row.titleRegenerationStartedAt ?? null},
           ${row.latestUserMessageAt},
@@ -130,6 +134,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           active_order_key = excluded.active_order_key,
           auto_settle_disabled_at = excluded.auto_settle_disabled_at,
           disabled_mcp_connector_ids_json = excluded.disabled_mcp_connector_ids_json,
+          disabled_skill_ids_json = excluded.disabled_skill_ids_json,
           title_regeneration_request_id = excluded.title_regeneration_request_id,
           title_regeneration_started_at = excluded.title_regeneration_started_at,
           latest_user_message_at = excluded.latest_user_message_at,
@@ -171,6 +176,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           active_order_key AS "activeOrderKey",
           auto_settle_disabled_at AS "autoSettleDisabledAt",
           disabled_mcp_connector_ids_json AS "disabledMcpConnectorIds",
+          disabled_skill_ids_json AS "disabledSkillIds",
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",

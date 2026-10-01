@@ -10,6 +10,7 @@ import {
   CommandId,
   IsoDateTime,
   McpConnectorId,
+  SkillId,
   ModelSelection,
   NonNegativeInt,
   ProjectId,
@@ -54,6 +55,8 @@ export const ProjectionThread = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // Stored as JSON; null (or absent) means every connector is enabled.
   disabledMcpConnectorIds: Schema.optional(Schema.NullOr(Schema.Array(McpConnectorId))),
+  // Stored as JSON; null (or absent) means every library skill is enabled.
+  disabledSkillIds: Schema.optional(Schema.NullOr(Schema.Array(SkillId))),
   titleRegenerationRequestId: Schema.optional(Schema.NullOr(CommandId)),
   titleRegenerationStartedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),

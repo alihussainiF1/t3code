@@ -36,6 +36,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { toOpenCodeMcpConfigs } from "../../mcp/connectors/McpConnectorTranslators.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { type SessionSkills, withOpenCodeSkillPaths } from "../../skills/SkillDelivery.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -54,6 +55,7 @@ import {
   openCodeRuntimeErrorDetail,
   loadOpenCodeCommands,
   parseOpenCodeModelSlug,
+  resolveOpenCodeConfigContent,
   runOpenCodeSdk,
   toOpenCodeFileParts,
   toOpenCodePermissionReply,
@@ -63,6 +65,20 @@ import {
 import * as Option from "effect/Option";
 
 const PROVIDER = ProviderDriverKind.make("opencode");
+
+/** Adds the session's library skill root to the config OpenCode is spawned with. */
+function withSessionSkillPaths(
+  environment: NodeJS.ProcessEnv,
+  skills: SessionSkills | undefined,
+): NodeJS.ProcessEnv {
+  if (!skills) return environment;
+  return {
+    ...environment,
+    OPENCODE_CONFIG_CONTENT: withOpenCodeSkillPaths(resolveOpenCodeConfigContent(environment), [
+      skills.skillsDirectory,
+    ]),
+  };
+}
 
 /**
  * Version tag stamped into the OpenCode resume cursor. Bump if the cursor
@@ -2858,9 +2874,12 @@ export function makeOpenCodeAdapter(
                 directory,
                 serverUrl,
                 ...(serverPassword ? { serverPassword } : {}),
-                environment: McpProviderSession.withAgentDeviceEnvironment(
-                  options?.environment ?? process.env,
-                  mcpSession,
+                environment: withSessionSkillPaths(
+                  McpProviderSession.withAgentDeviceEnvironment(
+                    options?.environment ?? process.env,
+                    mcpSession,
+                  ),
+                  McpProviderSession.readSessionSkills(input.threadId),
                 ),
               });
               const client = openCodeRuntime.createOpenCodeSdkClient({
@@ -3300,6 +3319,13 @@ export function makeOpenCodeAdapter(
                     system: buildRuntimeInstructions({
                       harness: "OpenCode",
                       model: `${parsedModel.providerID}/${parsedModel.modelID}`,
+                      // A server T3 spawned loads library skills natively.
+                      ...(context.server.external
+                        ? {
+                            skills: McpProviderSession.readSessionSkills(context.session.threadId)
+                              ?.skills,
+                          }
+                        : {}),
                     }),
                     parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
                   },

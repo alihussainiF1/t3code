@@ -15,7 +15,9 @@ import { resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
   mcpConnectorIdFromMenuAction,
+  skillIdFromMenuAction,
   toggleThreadMcpConnector,
+  toggleThreadSkill,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
@@ -28,6 +30,7 @@ import {
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
   readThreadMcpConnectorOptions,
+  readThreadSkillOptions,
   readThreadShell,
   useProjects,
 } from "../state/entities";
@@ -94,6 +97,7 @@ export function useThreadActionMenu(input: {
     confirmAndUnpinThread,
     setThreadAutoSettle,
     setThreadMcpConnectors,
+    setThreadSkills,
     archiveThread,
     deleteThread,
   } = useThreadActions();
@@ -163,6 +167,7 @@ export function useThreadActionMenu(input: {
             threadRef.environmentId,
             thread.disabledMcpConnectorIds,
           ),
+          skills: readThreadSkillOptions(threadRef.environmentId, thread.disabledSkillIds),
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -187,6 +192,17 @@ export function useThreadActionMenu(input: {
           );
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             failureToast("Failed to update connectors", squashAtomCommandFailure(result));
+          }
+          return;
+        }
+        const skillId = skillIdFromMenuAction(action);
+        if (skillId !== null) {
+          const result = await setThreadSkills(
+            threadRef,
+            toggleThreadSkill(thread.disabledSkillIds, skillId),
+          );
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            failureToast("Failed to update skills", squashAtomCommandFailure(result));
           }
           return;
         }
@@ -364,6 +380,7 @@ export function useThreadActionMenu(input: {
       router,
       setThreadAutoSettle,
       setThreadMcpConnectors,
+      setThreadSkills,
       settleThread,
       snoozeThread,
       threadRef,

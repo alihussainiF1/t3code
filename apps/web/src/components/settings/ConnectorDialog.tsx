@@ -333,7 +333,8 @@ function KeyValueRows({
   );
 }
 
-function ProviderAllowlist({
+/** "All providers" or a subset; shared with the skill editor. */
+export function ProviderAllowlist({
   providers,
   onChange,
 }: {
