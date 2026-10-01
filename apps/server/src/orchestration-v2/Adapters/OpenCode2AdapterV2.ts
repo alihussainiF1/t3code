@@ -1150,19 +1150,34 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         createdAt: now,
         updatedAt: now,
       };
+      // A subagent called again keeps its session and what T3 knew of it,
+      // including how many turns it ran: each one's native id is its own.
+      const previous = threads.get(childId);
       const child = newThreadState(childId, providerThread, call.state.directory, {
         call,
         appThread,
-        turns: 0,
+        turns: previous?.subagent?.turns ?? 0,
         prompt: call.prompt,
       });
-      child.agent = info?.agent ?? call.agent ?? child.agent;
+      child.agent = info?.agent ?? call.agent ?? previous?.agent ?? child.agent;
+      child.grants.push(...(previous?.grants ?? []));
+      // OpenCode gives a new session its parent's rules, which are the thread's.
+      child.rules = info?.permissions ?? previous?.rules;
       threads.set(childId, child);
       childOwners.set(childId, rootOf(call.state));
       call.child = child;
       yield* emit({ type: "app_thread.created", driver, appThread });
       yield* emit({ type: "provider_thread.updated", driver, providerThread });
       yield* emitSubagent(call);
+      // A session called again was not made now, so it may hold the rules of
+      // a mode the thread has left. OpenCode applies a rules change to the
+      // asks after it, so it gets the thread's as soon as its call names it.
+      if (info === undefined) {
+        yield* writeRules(child, rootOf(call.state).policy).pipe(
+          Effect.timeout(REQUEST_REPLY_TIMEOUT),
+          Effect.ignore({ log: true }),
+        );
+      }
     });
 
     /** Ends a subagent call and every call under it that is still running. */
@@ -1730,9 +1745,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const cancelled = yield* deliver(
         client.session.form.cancel({ sessionID: form.sessionID, formID: form.id }),
       );
-      if (!cancelled) return yield* abandonRequest(state, "form cancel failed");
-      state.unsettled = true;
-      yield* finishTurn(state, {
+      // The session that asked is the one blocked on the form and stopped by
+      // its cancel: a subagent's own, whose parent reads its failed call and
+      // goes on. A subagent's session has no Stop end to skip.
+      const asker = threads.get(form.sessionID) ?? state;
+      if (!cancelled) return yield* abandonRequest(asker, "form cancel failed");
+      if (asker.subagent === undefined) asker.unsettled = true;
+      yield* finishTurn(asker, {
         status: "failed",
         failure: makeProviderFailure({
           message: `OpenCode asked for ${mapped.unsupported}, which T3 Code can't show. The question was declined.`,
@@ -2430,7 +2449,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      * Stops a thread's background subagents and any execution OpenCode is
      * running on its own. Their sessions end as interrupted; the reports
      * OpenCode then queues wake the parent into an execution that is stopped
-     * as well, so no turn takes it.
+     * as well, so no turn takes it. A subagent the Stop did not reach runs on,
+     * so its call stays tracked: the session is not released under it, and
+     * the next Stop tries it again.
      */
     const stopBackground = Effect.fnUntraced(function* (state: ThreadState) {
       const calls = runningCalls(state).filter((call) => call.background);
@@ -2443,24 +2464,36 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         [...announced.values()].flatMap((info) =>
           info.parentID === caller.sessionId ? [info.sessionID] : [],
         );
+      const childrenOf = (call: SubagentCall) =>
+        call.child === undefined ? announcedTo(call.state) : [call.child.sessionId];
       // Each child reports to the session that called it, so its marker goes
       // on that caller's state: the thread's own, or a subagent's for a nested one.
       const children = new Map(
-        calls.flatMap((call) =>
-          (call.child === undefined ? announcedTo(call.state) : [call.child.sessionId]).map(
-            (childId) => [childId, call.state] as const,
-          ),
-        ),
+        calls.flatMap((call) => childrenOf(call).map((childId) => [childId, call.state] as const)),
       );
+      const unreached = new Set<string>();
       for (const [childId, caller] of children) {
         caller.stoppedChildren.add(childId);
-        yield* client.session
+        const reached = yield* client.session
           .interrupt({ sessionID: Session.ID.make(childId) })
-          .pipe(Effect.timeout(INTERRUPT_TIMEOUT), Effect.ignore({ log: true }));
+          .pipe(
+            // A session that is gone runs nothing.
+            Effect.catchTag("SessionNotFoundError", () => Effect.void),
+            Effect.timeout(INTERRUPT_TIMEOUT),
+            Effect.tapCause((cause) =>
+              Effect.logWarning("Could not stop an OpenCode subagent.", cause),
+            ),
+            Effect.exit,
+            Effect.map(Exit.isSuccess),
+          );
+        if (!reached) unreached.add(childId);
       }
       yield* lock.withPermit(
         Effect.gen(function* () {
-          for (const call of calls) yield* settleCall(call, "interrupted");
+          for (const call of calls) {
+            if (childrenOf(call).some((childId) => unreached.has(childId))) continue;
+            yield* settleCall(call, "interrupted");
+          }
           // A report already queued starts a follow-up the Stop must end too.
           for (const caller of callers) {
             for (const report of caller.reports.values()) {
@@ -2678,8 +2711,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               }),
             });
           }
-          // The thread's mode may have changed since the session was loaded.
+          // The thread's mode may have changed since the session was loaded,
+          // and its subagents still running hold the rules they started with.
+          // Those run on whether or not this turn starts, so theirs are best effort.
           yield* writeRules(state, turnInput.runtimePolicy);
+          for (const call of runningCalls(state)) {
+            if (call.child === undefined) continue;
+            yield* writeRules(call.child, turnInput.runtimePolicy).pipe(
+              Effect.timeout(REQUEST_REPLY_TIMEOUT),
+              Effect.ignore({ log: true }),
+            );
+          }
           // A selection changed since the last turn applies now; OpenCode keeps
           // the session's model otherwise.
           if (!sameModel(model, state.model)) {

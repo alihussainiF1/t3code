@@ -574,6 +574,34 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("keeps tracking a background subagent whose Stop did not reach it", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", {
+          status: 500,
+          body: { _tag: "UnknownError", message: "interrupt failed" },
+        }),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: SESSION }),
+      ]);
+      const watch = yield* watchBackgroundTurn(runtime);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.attached;
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.equal((yield* watch.terminal)?.status, "interrupted");
+      // The subagent still runs, so the session is not idle and the next Stop reaches it.
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("stops a background subagent announced before its call named it", () =>
     Effect.gen(function* () {
       const call = "call-background";
@@ -628,6 +656,50 @@ describe("OpenCode2 adapter", () => {
       });
       assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("gives a background subagent the rules of a mode changed while it runs", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        // The next turn runs Supervised while the subagent from Full access still runs.
+        out("agent.list", "<any>"),
+        reply("agent.list", agentList),
+        out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
+        reply("session.update", null),
+        out("session.update", { sessionID: CHILD, permissions: supervisedRules.slice(0, 3) }),
+        reply("session.update", null),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const firstEnded = yield* Deferred.make<void>();
+      const ended = yield* runtime.events.pipe(
+        Stream.filter(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+            event.type === "turn.terminal",
+        ),
+        Stream.tap(() => Deferred.succeed(firstEnded, undefined)),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* Deferred.await(firstEnded);
+      yield* runtime.startTurn({
+        ...withLineage(thread),
+        runId: RunId.make("run:opencode2-adapter:2"),
+        runOrdinal: 2,
+        providerTurnOrdinal: 2,
+        attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
+        runtimePolicy: policy("approval-required"),
+      });
+      assert.deepEqual(
+        [...(yield* Fiber.join(ended))].map((terminal) => terminal.status),
+        ["completed", "completed"],
+      );
     }).pipe(Effect.scoped),
   );
 
@@ -1472,6 +1544,164 @@ describe("OpenCode2 adapter", () => {
       });
       const request = yield* Fiber.join(requested);
       yield* runtime.respondToRuntimeRequest({ requestId: request!.id, decision: "accept" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("stops the subagent whose form T3 cannot show or decline", () =>
+    Effect.gen(function* () {
+      const linkForm = {
+        id: "frm_0eb79ab35001fkvFECSh3wYNVD",
+        sessionID: CHILD,
+        title: "MCP authorization",
+        metadata: { kind: "mcp" },
+        fields: [{ key: "authorization", type: "external", url: "https://example.com/authorize" }],
+      };
+      const cancelOut = out("session.form.cancel", { sessionID: CHILD, formID: linkForm.id });
+      const failedCancel = reply("session.form.cancel", {
+        status: 500,
+        body: { _tag: "UnknownError", message: "cancel failed" },
+      });
+      const { runtime, thread } = yield* resumed([
+        ...subagentAsks(CHILD).slice(0, -1),
+        event("form.created", { form: linkForm }),
+        cancelOut,
+        failedCancel,
+        cancelOut,
+        failedCancel,
+        // The subagent's session is the one blocked on the form; the parent
+        // goes on once its subagent is stopped.
+        out("session.interrupt", { sessionID: CHILD }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(withLineage(thread));
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("ends only the subagent's turn when it declines the subagent's form", () =>
+    Effect.gen(function* () {
+      const linkForm = {
+        id: "frm_0eb79ab35001fkvFECSh3wYNVD",
+        sessionID: CHILD,
+        title: "MCP authorization",
+        metadata: { kind: "mcp" },
+        fields: [{ key: "authorization", type: "external", url: "https://example.com/authorize" }],
+      };
+      const { runtime, thread } = yield* resumed([
+        ...subagentAsks(CHILD).slice(0, -1),
+        event("form.created", { form: linkForm }),
+        out("session.form.cancel", { sessionID: CHILD, formID: linkForm.id }),
+        reply("session.form.cancel", null),
+        // The cancel stops the subagent; its parent reads the failed call and goes on.
+        event("session.execution.interrupted", { sessionID: CHILD }),
+        event("session.tool.failed", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant",
+          id: "call-subagent",
+          error: { type: "unknown", message: `Subagent cancelled (sessionID: ${CHILD})` },
+          executed: true,
+        }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant_after",
+          ordinal: 0,
+          text: "The subagent could not finish.",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(withLineage(thread));
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("gives a resumed subagent the rules of the thread's current mode", () =>
+    Effect.gen(function* () {
+      const call = "call-resume";
+      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant_2", id: call };
+      const { runtime, thread } = yield* resumed([
+        // A first turn on Full access runs the subagent once.
+        ...subagentAsks(CHILD).slice(0, -1),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.tool.success", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant",
+          id: "call-subagent",
+          content: [{ type: "text", text: "done" }],
+          metadata: { sessionID: CHILD, status: "completed" },
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        // The thread is now Supervised: the parent gets the narrower rules...
+        out("agent.list", "<any>"),
+        reply("agent.list", agentList),
+        out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
+        reply("session.update", null),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        // ...and its model resumes the same subagent, whose session OpenCode
+        // made with the Full access rules it inherited back then.
+        event("session.tool.input.started", { ...tool, name: "subagent" }),
+        event("session.tool.called", {
+          ...tool,
+          name: "subagent",
+          input: { description: "Echo", prompt: "again", sessionID: CHILD },
+          executed: false,
+        }),
+        event("session.tool.progress", {
+          ...tool,
+          metadata: { sessionID: CHILD, status: "running" },
+        }),
+        // The subagent gets them too before its execution runs anything.
+        out("session.update", {
+          sessionID: CHILD,
+          permissions: supervisedRules.slice(0, 3),
+        }),
+        reply("session.update", null),
+        event("session.execution.started", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const firstEnded = yield* Deferred.make<void>();
+      const childTurns = new Set<string>();
+      const ended = yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          Effect.sync(() => {
+            const nativeId =
+              event.type === "provider_turn.updated"
+                ? event.providerTurn.nativeTurnRef?.nativeId
+                : undefined;
+            if (nativeId?.startsWith(`${CHILD}:turn:`) === true) childTurns.add(nativeId);
+          }),
+        ),
+        Stream.filter(
+          (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+            event.type === "turn.terminal",
+        ),
+        Stream.tap(() => Deferred.succeed(firstEnded, undefined)),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* Deferred.await(firstEnded);
+      yield* runtime.startTurn({
+        ...withLineage(thread),
+        runId: RunId.make("run:opencode2-adapter:2"),
+        runOrdinal: 2,
+        providerTurnOrdinal: 2,
+        attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
+        runtimePolicy: policy("approval-required"),
+      });
+      assert.deepEqual(
+        [...(yield* Fiber.join(ended))].map((terminal) => terminal.status),
+        ["completed", "completed"],
+      );
+      // The resumed subagent's execution is its next turn, not its first again.
+      assert.deepEqual([...childTurns], [`${CHILD}:turn:1`, `${CHILD}:turn:2`]);
     }).pipe(Effect.scoped),
   );
 
