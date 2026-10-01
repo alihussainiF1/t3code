@@ -866,6 +866,8 @@ function OpenCommandPaletteDialog(props: {
   } | null>(null);
   const [newProjectPublishesToGitHub, setNewProjectPublishesToGitHub] = useState(false);
   const [isCreatingNewProject, setIsCreatingNewProject] = useState(false);
+  // State lags a render behind, so a repeated Enter could start a second create.
+  const newProjectSubmittingRef = useRef(false);
   const createNewProject = useNewProject();
   const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
@@ -2475,15 +2477,22 @@ function OpenCommandPaletteDialog(props: {
     canCreateProjectInEnvironment(browseEnvironment?.connection.phase);
 
   async function submitNewProject(): Promise<void> {
-    if (newProjectFlow === null || !canSubmitNewProject) return;
+    if (newProjectFlow === null || !canSubmitNewProject || newProjectSubmittingRef.current) {
+      return;
+    }
+    newProjectSubmittingRef.current = true;
     setIsCreatingNewProject(true);
-    const created = await createNewProject({
-      environmentId: newProjectFlow.environmentId,
-      name: newProjectName,
-      github: newProjectPublishesToGitHub ? newProjectGitHubTarget : null,
-    });
-    setIsCreatingNewProject(false);
-    if (created) setOpen(false);
+    try {
+      const created = await createNewProject({
+        environmentId: newProjectFlow.environmentId,
+        name: newProjectName,
+        github: newProjectPublishesToGitHub ? newProjectGitHubTarget : null,
+      });
+      if (created) setOpen(false);
+    } finally {
+      newProjectSubmittingRef.current = false;
+      setIsCreatingNewProject(false);
+    }
   }
 
   function getDefaultCloneParentPath(environmentId: EnvironmentId): string {

@@ -54,6 +54,9 @@ export function normalizeProjectPathForComparison(value: string): string {
   return normalized;
 }
 
+// Windows refuses these as file names, with or without an extension.
+const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
+
 /**
  * Folder name for a project started from just a name ("Pinball Stats" becomes
  * "pinball-stats"). The server uses it for `projects.createNew`, and clients
@@ -68,5 +71,6 @@ export function newProjectFolderName(name: string): string {
     .replace(/^-+/, "")
     .slice(0, 64)
     .replace(/-+$/, "");
-  return slug.length > 0 ? slug : "project";
+  if (slug.length === 0) return "project";
+  return WINDOWS_RESERVED_NAME.test(slug) ? `${slug}-project` : slug;
 }

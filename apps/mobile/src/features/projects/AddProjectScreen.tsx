@@ -957,50 +957,65 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
       ? getNewProjectPathPreview(environment.newProjectsRoot, trimmedName)
       : null;
 
+  // State lags a render behind, so a double tap could start a second create.
+  const submittingRef = useRef(false);
   const submit = async () => {
-    if (!environment || trimmedName.length === 0 || isSubmitting) return;
+    if (!environment || trimmedName.length === 0 || submittingRef.current) return;
+    submittingRef.current = true;
     setError(null);
     setIsSubmitting(true);
-    const result = await createNew({
-      environmentId: environment.environmentId,
-      input: { name: trimmedName },
-    });
-    if (AsyncResult.isFailure(result)) {
-      setError(errorMessage(Cause.squash(result.cause)));
-      setIsSubmitting(false);
-      return;
-    }
-    const { projectId, workspaceRoot, commitError } = result.value;
-    if (commitError !== undefined) {
-      Alert.alert("Created without a first commit", commitError);
-    }
-    if (publishesToGitHub && githubTarget !== null) {
-      void publishRepository({
+    try {
+      const result = await createNew({
         environmentId: environment.environmentId,
-        input: {
-          cwd: workspaceRoot,
-          provider: "github",
-          repository: getNewProjectGitHubRepository(githubTarget, workspaceRoot),
-          visibility: "private",
-        },
-      }).then((publishResult) => {
-        if (AsyncResult.isFailure(publishResult)) {
-          Alert.alert(
-            "Could not create the GitHub repository",
-            errorMessage(Cause.squash(publishResult.cause)),
-          );
-        }
+        input: { name: trimmedName },
       });
+      if (AsyncResult.isFailure(result)) {
+        setError(errorMessage(Cause.squash(result.cause)));
+        return;
+      }
+      const { projectId, workspaceRoot, commitError } = result.value;
+      if (commitError !== undefined) {
+        Alert.alert("Created without a first commit", commitError);
+      }
+      if (publishesToGitHub && githubTarget !== null) {
+        void publishRepository({
+          environmentId: environment.environmentId,
+          input: {
+            cwd: workspaceRoot,
+            provider: "github",
+            repository: getNewProjectGitHubRepository(githubTarget, workspaceRoot),
+            visibility: "private",
+          },
+        }).then((publishResult) => {
+          if (AsyncResult.isFailure(publishResult)) {
+            Alert.alert(
+              "Could not create the GitHub repository",
+              errorMessage(Cause.squash(publishResult.cause)),
+            );
+          }
+        });
+      }
+      // The draft screen resolves its project from the client store, so it
+      // must not open before the create event has arrived.
+      const project = await waitForProject(
+        { environmentId: environment.environmentId, projectId },
+        15_000,
+      );
+      if (project === null) {
+        setError(
+          "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+        );
+        return;
+      }
+      openNewTaskDraft(navigation, {
+        environmentId: environment.environmentId,
+        projectId,
+        title: trimmedName,
+      });
+    } finally {
+      submittingRef.current = false;
+      setIsSubmitting(false);
     }
-    // The draft screen resolves its project from the client store, so wait
-    // for the create event before opening it.
-    await waitForProject({ environmentId: environment.environmentId, projectId }, 15_000);
-    setIsSubmitting(false);
-    openNewTaskDraft(navigation, {
-      environmentId: environment.environmentId,
-      projectId,
-      title: trimmedName,
-    });
   };
 
   return (

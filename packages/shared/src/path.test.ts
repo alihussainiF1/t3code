@@ -52,5 +52,9 @@ describe("path helpers", () => {
     // Nothing usable left, so the server falls back to a fixed name.
     expect(newProjectFolderName("🎱🎱")).toBe("project");
     expect(newProjectFolderName(`${"a".repeat(63)} b`)).toBe("a".repeat(63));
+    // Windows cannot make folders with device names.
+    expect(newProjectFolderName("Con")).toBe("con-project");
+    expect(newProjectFolderName("LPT1")).toBe("lpt1-project");
+    expect(newProjectFolderName("console")).toBe("console");
   });
 });
