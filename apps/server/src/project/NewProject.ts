@@ -46,7 +46,7 @@ function escapeXml(value: string): string {
 }
 
 /** A rounded square with the name's initials, colored by a hash of the name. */
-export function newProjectIconSvg(name: string): string {
+function newProjectIconSvg(name: string): string {
   const words = name.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   const initials =
     words
@@ -68,7 +68,7 @@ export function newProjectIconSvg(name: string): string {
   ].join("\n");
 }
 
-export function newProjectReadme(name: string): string {
+function newProjectReadme(name: string): string {
   return [
     `<img src="assets/icon.svg" width="64" height="64" alt="">`,
     "",
