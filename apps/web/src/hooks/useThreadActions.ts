@@ -6,7 +6,12 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
-import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type McpConnectorId,
+  type ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
@@ -28,6 +33,7 @@ import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentSupportsAutoSettleOptOut,
+  readEnvironmentSupportsMcpConnectors,
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsPinReorder,
   readEnvironmentSupportsActiveReorder,
@@ -117,6 +123,18 @@ export class ThreadAutoSettleOptOutUnsupportedError extends Schema.TaggedError<T
 ) {
   override get message(): string {
     return "This environment's server does not support turning auto-settle off per thread yet. Update the server to use it.";
+  }
+}
+
+export class ThreadMcpConnectorsUnsupportedError extends Schema.TaggedError<ThreadMcpConnectorsUnsupportedError>()(
+  "ThreadMcpConnectorsUnsupportedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "This environment's server does not support connectors yet. Update the server to use them.";
   }
 }
 
@@ -215,6 +233,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const setThreadAutoSettleMutation = useAtomCommand(threadEnvironment.setAutoSettle, {
+    reportFailure: false,
+  });
+  const setThreadMcpConnectorsMutation = useAtomCommand(threadEnvironment.setMcpConnectors, {
     reportFailure: false,
   });
   const reorderPinnedThreadMutation = useAtomCommand(threadEnvironment.reorderPin, {
@@ -600,6 +621,27 @@ export function useThreadActions() {
     [setThreadAutoSettleMutation],
   );
 
+  /** Replaces the set of connectors turned off for one thread; [] re-enables all. */
+  const setThreadMcpConnectors = useCallback(
+    async (target: ScopedThreadRef, disabledMcpConnectorIds: ReadonlyArray<McpConnectorId>) => {
+      if (!readEnvironmentSupportsMcpConnectors(target.environmentId)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new ThreadMcpConnectorsUnsupportedError({
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+            }),
+          ),
+        );
+      }
+      return setThreadMcpConnectorsMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, disabledMcpConnectorIds },
+      });
+    },
+    [setThreadMcpConnectorsMutation],
+  );
+
   const pinThread = useCallback(
     async (target: ScopedThreadRef, opts: { orderKey?: string } = {}) => {
       // Version skew: never send the command to a server that predates it.
@@ -920,6 +962,7 @@ export function useThreadActions() {
       reorderPinnedThread,
       reorderActiveThread,
       setThreadAutoSettle,
+      setThreadMcpConnectors,
     }),
     [
       archiveThread,
@@ -930,6 +973,7 @@ export function useThreadActions() {
       reorderPinnedThread,
       reorderActiveThread,
       setThreadAutoSettle,
+      setThreadMcpConnectors,
       settleThread,
       snoozeThread,
       unarchiveThread,

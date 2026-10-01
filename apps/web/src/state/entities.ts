@@ -9,9 +9,13 @@ import {
   mergeEnvironmentThread,
 } from "@t3tools/client-runtime/state/threads";
 import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, McpConnectorId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
+import {
+  listThreadMcpConnectors,
+  type ThreadMcpConnectorOption,
+} from "../components/threadActionMenu.logic";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
@@ -244,6 +248,28 @@ export function readEnvironmentSupportsAutoSettleOptOut(environmentId: Environme
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadAutoSettleOptOut === true
   );
+}
+
+/** Whether the environment's server stores MCP connectors and understands
+    thread.mcp-connectors.set. Same version-skew contract as settlement. */
+export function readEnvironmentSupportsMcpConnectors(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .mcpConnectors === true
+  );
+}
+
+/**
+ * The per-thread connector toggles for a thread menu, or null when the
+ * environment's server predates connectors.
+ */
+export function readThreadMcpConnectorOptions(
+  environmentId: EnvironmentId,
+  disabledIds: ReadonlyArray<McpConnectorId> | undefined,
+): ReadonlyArray<ThreadMcpConnectorOption> | null {
+  const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId);
+  if (config?.environment.capabilities.mcpConnectors !== true) return null;
+  return listThreadMcpConnectors(config.settings.mcpConnectors, disabledIds);
 }
 
 export function readEnvironmentSupportsActiveReorder(environmentId: EnvironmentId): boolean {

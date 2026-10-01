@@ -5,6 +5,7 @@ import {
   CommandId,
   ComposerContextId,
   EventId,
+  McpConnectorId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -326,6 +327,47 @@ describe("applyThreadDetailEvent", () => {
       expect(on.kind).toBe("updated");
       if (on.kind === "updated") {
         expect(on.thread.autoSettleDisabledAt).toBeNull();
+      }
+    });
+  });
+
+  describe("thread.mcp-connectors-set", () => {
+    it("stores the disabled set and drops it when everything is re-enabled", () => {
+      const at = "2026-04-01T05:00:00.000Z";
+      const off = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: at,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.mcp-connectors-set",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          disabledMcpConnectorIds: [McpConnectorId.make("linear")],
+          updatedAt: at,
+        },
+      });
+      expect(off.kind).toBe("updated");
+      if (off.kind !== "updated") return;
+      expect(off.thread.disabledMcpConnectorIds).toEqual(["linear"]);
+      expect(off.thread.updatedAt).toBe(at);
+
+      const on = applyThreadDetailEvent(off.thread, {
+        ...baseEventFields,
+        sequence: 8,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.mcp-connectors-set",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          disabledMcpConnectorIds: [],
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+      expect(on.kind).toBe("updated");
+      if (on.kind === "updated") {
+        expect("disabledMcpConnectorIds" in on.thread).toBe(false);
       }
     });
   });

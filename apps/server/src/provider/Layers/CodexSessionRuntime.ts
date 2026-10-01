@@ -75,7 +75,10 @@ function configuredMcpToolAvailability(
   appServerArgs: ReadonlyArray<string> | undefined,
   mcpCapabilities: ReadonlySet<string> | undefined,
 ): T3CodeToolAvailability {
-  if (!hasConfiguredMcpServer(appServerArgs)) return { browser: false, device: false };
+  // User connectors also add `mcp_servers.*` overrides; only T3's own server carries these tools.
+  if (appServerArgs?.some((argument) => argument.startsWith("mcp_servers.t3-code.")) !== true) {
+    return { browser: false, device: false };
+  }
   // Callers predating the capability set attached the browser toolkit only.
   if (mcpCapabilities === undefined) return { browser: true, device: false };
   return { browser: mcpCapabilities.has("preview"), device: mcpCapabilities.has("device") };

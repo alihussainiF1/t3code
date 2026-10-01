@@ -14,6 +14,8 @@ import { useCallback, useMemo } from "react";
 import { resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
+  mcpConnectorIdFromMenuAction,
+  toggleThreadMcpConnector,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
@@ -25,6 +27,7 @@ import {
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
+  readThreadMcpConnectorOptions,
   readThreadShell,
   useProjects,
 } from "../state/entities";
@@ -90,6 +93,7 @@ export function useThreadActionMenu(input: {
     pinThread,
     confirmAndUnpinThread,
     setThreadAutoSettle,
+    setThreadMcpConnectors,
     archiveThread,
     deleteThread,
   } = useThreadActions();
@@ -155,6 +159,10 @@ export function useThreadActionMenu(input: {
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
           supports,
           snoozePresets,
+          mcpConnectors: readThreadMcpConnectorOptions(
+            threadRef.environmentId,
+            thread.disabledMcpConnectorIds,
+          ),
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -168,6 +176,17 @@ export function useThreadActionMenu(input: {
           const result = await snoozeThread(threadRef, preset.snoozedUntil);
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             failureToast("Failed to snooze thread", squashAtomCommandFailure(result));
+          }
+          return;
+        }
+        const connectorId = mcpConnectorIdFromMenuAction(action);
+        if (connectorId !== null) {
+          const result = await setThreadMcpConnectors(
+            threadRef,
+            toggleThreadMcpConnector(thread.disabledMcpConnectorIds, connectorId),
+          );
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            failureToast("Failed to update connectors", squashAtomCommandFailure(result));
           }
           return;
         }
@@ -344,6 +363,7 @@ export function useThreadActionMenu(input: {
       projects,
       router,
       setThreadAutoSettle,
+      setThreadMcpConnectors,
       settleThread,
       snoozeThread,
       threadRef,

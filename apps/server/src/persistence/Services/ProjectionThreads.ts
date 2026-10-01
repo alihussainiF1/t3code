@@ -9,6 +9,7 @@
 import {
   CommandId,
   IsoDateTime,
+  McpConnectorId,
   ModelSelection,
   NonNegativeInt,
   ProjectId,
@@ -51,6 +52,8 @@ export const ProjectionThread = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(Schema.String)),
   activeOrderKey: Schema.optional(Schema.NullOr(Schema.String)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  // Stored as JSON; null (or absent) means every connector is enabled.
+  disabledMcpConnectorIds: Schema.optional(Schema.NullOr(Schema.Array(McpConnectorId))),
   titleRegenerationRequestId: Schema.optional(Schema.NullOr(CommandId)),
   titleRegenerationStartedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),

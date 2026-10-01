@@ -19,6 +19,8 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as EffectAcpClient from "effect-acp/client";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
+
+import { filterAcpMcpServersByCapabilities } from "../../mcp/connectors/McpConnectorTranslators.ts";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
@@ -97,6 +99,12 @@ export interface AcpSessionRuntimeOptions {
   };
   readonly authMethodId: string;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  /**
+   * User-configured MCP connectors. Unlike `mcpServers`, these are checked
+   * against the agent's advertised `mcpCapabilities` after `initialize`, and
+   * transports the agent does not support are left out with a warning.
+   */
+  readonly connectorMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   /** Extra workspace roots the agent may read and write besides `cwd`. */
   readonly additionalDirectories?: ReadonlyArray<string>;
   /** Transforms provider stdout before protocol parsing and protocol logging. */
@@ -742,6 +750,17 @@ export const make = (
 
     const startOnce = Effect.gen(function* () {
       const initializeResult = yield* sendInitialize;
+      const connectorServers = filterAcpMcpServersByCapabilities(
+        options.connectorMcpServers ?? [],
+        initializeResult.agentCapabilities?.mcpCapabilities ?? undefined,
+      );
+      for (const server of connectorServers.unsupported) {
+        yield* Effect.logWarning("ACP agent does not support this MCP connector's transport", {
+          connector: server.name,
+          transport: "type" in server ? server.type : "stdio",
+        });
+      }
+      const mcpServers = [...(options.mcpServers ?? []), ...connectorServers.supported];
 
       const authenticatePayload = {
         methodId: options.authMethodId,
@@ -769,7 +788,7 @@ export const make = (
         const resumePayload = {
           sessionId: options.resumeSessionId,
           cwd: options.cwd,
-          mcpServers: options.mcpServers ?? [],
+          mcpServers,
           ...(options.additionalDirectories && options.additionalDirectories.length > 0
             ? { additionalDirectories: options.additionalDirectories }
             : {}),
@@ -797,7 +816,7 @@ export const make = (
         const loadPayload = {
           sessionId: options.resumeSessionId,
           cwd: options.cwd,
-          mcpServers: options.mcpServers ?? [],
+          mcpServers,
         } satisfies EffectAcpSchema.LoadSessionRequest;
         const sessionLoadTimeout = Duration.fromInputUnsafe(
           options.sessionLoadTimeout ?? defaultSessionLoadTimeout,
@@ -867,7 +886,7 @@ export const make = (
       } else {
         const createPayload = {
           cwd: options.cwd,
-          mcpServers: options.mcpServers ?? [],
+          mcpServers,
           ...(options.additionalDirectories && options.additionalDirectories.length > 0
             ? { additionalDirectories: options.additionalDirectories }
             : {}),

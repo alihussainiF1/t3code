@@ -1132,6 +1132,32 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    // MCP servers configured in the provider CLIs on this environment, for import.
+    discoverMcpConnectors: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:mcp-connectors:discover",
+      tag: WS_METHODS.mcpConnectorsDiscover,
+    }),
+    // Import and disconnect write settings, so they queue behind settings updates.
+    importMcpConnector: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:mcp-connectors:import",
+      tag: WS_METHODS.mcpConnectorsImport,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    startMcpConnectorOAuth: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:mcp-connectors:oauth-start",
+      tag: WS_METHODS.mcpConnectorsOAuthStart,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.connectorId]),
+      },
+    }),
+    disconnectMcpConnectorOAuth: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:mcp-connectors:oauth-disconnect",
+      tag: WS_METHODS.mcpConnectorsOAuthDisconnect,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

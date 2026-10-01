@@ -43,6 +43,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { toAcpMcpServers } from "../../mcp/connectors/McpConnectorTranslators.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   ProviderAdapterProcessError,
@@ -560,6 +561,9 @@ export function makeCursorAdapter(
             runtimeMode: input.runtimeMode,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
+            connectorMcpServers: toAcpMcpServers(
+              McpProviderSession.readMcpConnectors(input.threadId),
+            ),
             ...(mcpSession
               ? {
                   mcpServers: [

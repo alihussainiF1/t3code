@@ -260,6 +260,22 @@ export function applyThreadDetailEvent(
         },
       };
 
+    case "thread.mcp-connectors-set": {
+      // Empty means every connector is enabled; drop the key like the server
+      // snapshot does so shells and details stay comparable.
+      const { disabledMcpConnectorIds: _previous, ...rest } = thread;
+      return {
+        kind: "updated",
+        thread: {
+          ...rest,
+          ...(event.payload.disabledMcpConnectorIds.length > 0
+            ? { disabledMcpConnectorIds: event.payload.disabledMcpConnectorIds }
+            : {}),
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+    }
+
     // ── Thread metadata ─────────────────────────────────────────────
     case "thread.meta-updated":
       return {

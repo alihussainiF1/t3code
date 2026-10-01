@@ -884,6 +884,39 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.mcp-connectors.set": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // The command carries the full set. Normalize it (dedupe + sort) so the
+      // stored set is canonical, and keep updatedAt when nothing changed so a
+      // re-sent set does not churn ordering (same idempotency as auto-settle).
+      const disabledMcpConnectorIds = Array.from(
+        new Set(command.disabledMcpConnectorIds),
+      ).toSorted();
+      const current = thread.disabledMcpConnectorIds ?? [];
+      const unchanged =
+        current.length === disabledMcpConnectorIds.length &&
+        current.every((id, index) => id === disabledMcpConnectorIds[index]);
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.mcp-connectors-set",
+        payload: {
+          threadId: command.threadId,
+          disabledMcpConnectorIds,
+          updatedAt: unchanged ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
     case "thread.active.reorder": {
       const thread = yield* requireThreadNotArchived({
         readModel,

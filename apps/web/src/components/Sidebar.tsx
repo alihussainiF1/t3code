@@ -154,7 +154,12 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
-import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
+import {
+  buildThreadActionMenuItems,
+  listThreadMcpConnectors,
+  mcpConnectorIdFromMenuAction,
+  toggleThreadMcpConnector,
+} from "./threadActionMenu.logic";
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
@@ -2196,6 +2201,7 @@ export default function Sidebar() {
     reorderPinnedThread,
     reorderActiveThread,
     setThreadAutoSettle,
+    setThreadMcpConnectors,
     archiveThread,
     deleteThread,
   } = useThreadActions();
@@ -4068,6 +4074,14 @@ export default function Sidebar() {
         const supportsTitleRegeneration =
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadTitleRegeneration === true;
+        const threadServerConfig = serverConfigs.get(thread.environmentId);
+        const mcpConnectors =
+          threadServerConfig?.environment.capabilities.mcpConnectors === true
+            ? listThreadMcpConnectors(
+                threadServerConfig.settings.mcpConnectors,
+                thread.disabledMcpConnectorIds,
+              )
+            : null;
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
@@ -4108,11 +4122,30 @@ export default function Sidebar() {
                 titleRegeneration: supportsTitleRegeneration,
               },
               snoozePresets,
+              mcpConnectors,
             }),
             position,
           ),
         );
         if (clicked._tag === "Failure") return;
+        const connectorId = clicked.value ? mcpConnectorIdFromMenuAction(clicked.value) : null;
+        if (connectorId !== null) {
+          const result = await setThreadMcpConnectors(
+            threadRef,
+            toggleThreadMcpConnector(thread.disabledMcpConnectorIds, connectorId),
+          );
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to update connectors",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          return;
+        }
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
             clicked.value === "snooze:custom"
@@ -4319,6 +4352,7 @@ export default function Sidebar() {
       serverConfigs,
       setProjectScopeKey,
       setThreadAutoSettle,
+      setThreadMcpConnectors,
       startThreadRename,
       updateThreadMetadata,
       timestampFormat,

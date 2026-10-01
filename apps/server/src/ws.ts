@@ -166,6 +166,7 @@ import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
+import { McpConnectorService } from "./mcp/connectors/McpConnectorService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
@@ -650,6 +651,7 @@ const makeWsRpcLayer = (
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      const mcpConnectors = yield* McpConnectorService;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
           (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
@@ -2863,6 +2865,24 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.mcpConnectorsDiscover]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpConnectorsDiscover, mcpConnectors.discover(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.mcpConnectorsImport]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpConnectorsImport, mcpConnectors.importServer(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.mcpConnectorsOAuthStart]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpConnectorsOAuthStart, mcpConnectors.startOAuth(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.mcpConnectorsOAuthDisconnect]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpConnectorsOAuthDisconnect,
+            mcpConnectors.disconnectOAuth(input).pipe(Effect.as({})),
+            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
           observeRpcEffect(

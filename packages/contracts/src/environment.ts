@@ -144,6 +144,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands thread.auto-settle.set (per-thread auto-settle off).
       Same version-skew contract as threadSettlement. */
   threadAutoSettleOptOut: Schema.optionalKey(Schema.Boolean),
+  /** Server stores MCP connectors in settings, attaches them to provider
+      sessions, and understands thread.mcp-connectors.set. Clients hide the
+      Connectors page and per-thread toggles when absent. */
+  mcpConnectors: Schema.optionalKey(Schema.Boolean),
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),

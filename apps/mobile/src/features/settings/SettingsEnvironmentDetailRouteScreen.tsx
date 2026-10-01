@@ -331,6 +331,25 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                       </View>
                     ))}
                 </SettingsSection>
+                {config.environment.capabilities.mcpConnectors === true &&
+                Object.keys(config.settings.mcpConnectors).length > 0 ? (
+                  // Read-only: connectors are added and edited from desktop or web settings.
+                  <SettingsSection title="Connectors">
+                    {Object.entries(config.settings.mcpConnectors).map(([id, connector]) => (
+                      <View key={id} className="gap-1 p-4">
+                        <Text className="text-base font-t3-medium text-foreground">
+                          {connector.name}
+                        </Text>
+                        <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+                          {connector.enabled ? "" : "Off · "}
+                          {connector.transport.type === "stdio"
+                            ? connector.transport.command
+                            : connector.transport.url}
+                        </Text>
+                      </View>
+                    ))}
+                  </SettingsSection>
+                ) : null}
               </>
             ) : null}
           </>

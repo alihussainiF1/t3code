@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  McpConnectorId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -241,6 +242,28 @@ describe("environment entity projections", () => {
       unsettledAt: "2026-03-09T12:00:00.000Z",
     });
     expect(merged?.messages).toBe(messages);
+  });
+
+  it("takes per-thread connector opt-outs from the shell, including when it has none", () => {
+    const detail = {
+      ...THREAD_SHELL,
+      environmentId: ENVIRONMENT_ID,
+      disabledMcpConnectorIds: [McpConnectorId.make("github")],
+      deletedAt: null,
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+    } satisfies OrchestrationThread & { readonly environmentId: EnvironmentId };
+    const shell = { ...THREAD_SHELL, environmentId: ENVIRONMENT_ID };
+
+    expect(mergeEnvironmentThread(detail, shell)).not.toHaveProperty("disabledMcpConnectorIds");
+    expect(
+      mergeEnvironmentThread(detail, {
+        ...shell,
+        disabledMcpConnectorIds: [McpConnectorId.make("linear")],
+      })?.disabledMcpConnectorIds,
+    ).toEqual(["linear"]);
   });
 
   it("preserves untouched project and thread identities across unrelated shell updates", () => {

@@ -41,8 +41,12 @@ export function mergeEnvironmentThread(
     return detail;
   }
 
+  const { disabledMcpConnectorIds: _previousDisabledMcpConnectorIds, ...detailRest } = detail;
   return {
-    ...detail,
+    ...detailRest,
+    ...(shell.disabledMcpConnectorIds !== undefined
+      ? { disabledMcpConnectorIds: shell.disabledMcpConnectorIds }
+      : {}),
     environmentId: shell.environmentId,
     id: shell.id,
     projectId: shell.projectId,

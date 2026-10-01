@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
+import { McpConnectorId } from "@t3tools/contracts";
+
+import {
+  buildThreadActionMenuItems,
+  listThreadMcpConnectors,
+  mcpConnectorIdFromMenuAction,
+  toggleThreadMcpConnector,
+  type ThreadActionMenuState,
+} from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
   branch: null,
@@ -22,6 +30,7 @@ const baseState: ThreadActionMenuState = {
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
   ],
+  mcpConnectors: null,
 };
 
 function ids(state: ThreadActionMenuState): string[] {
@@ -165,5 +174,48 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "archive",
     );
     expect(archiveItem?.disabled).toBe(true);
+  });
+
+  it("lists connectors with checkmarks only when there is one to toggle", () => {
+    const github = McpConnectorId.make("github");
+    expect(allIds({ ...baseState, mcpConnectors: [] })).not.toContain("mcp-connectors");
+    const connectors = buildThreadActionMenuItems({
+      ...baseState,
+      mcpConnectors: [{ id: github, name: "GitHub", enabledForThread: false }],
+    }).find((item) => item.id === "mcp-connectors");
+    expect(connectors?.children?.[0]).toMatchObject({
+      id: "mcp-connector:github",
+      label: "GitHub",
+      checked: false,
+    });
+    expect(mcpConnectorIdFromMenuAction("mcp-connector:github")).toBe(github);
+    expect(mcpConnectorIdFromMenuAction("mcp-connectors:hint")).toBeNull();
+  });
+});
+
+describe("thread MCP connectors", () => {
+  const github = McpConnectorId.make("github");
+  const linear = McpConnectorId.make("linear");
+  const stdio = { type: "stdio" as const, command: "npx", args: [], env: [] };
+
+  it("lists environment-enabled connectors by name with this thread's opt-outs", () => {
+    expect(
+      listThreadMcpConnectors(
+        {
+          [linear]: { name: "Linear", enabled: true, transport: stdio },
+          [github]: { name: "GitHub", enabled: true, transport: stdio },
+          [McpConnectorId.make("off")]: { name: "Off", enabled: false, transport: stdio },
+        },
+        [linear],
+      ),
+    ).toEqual([
+      { id: github, name: "GitHub", enabledForThread: true },
+      { id: linear, name: "Linear", enabledForThread: false },
+    ]);
+  });
+
+  it("toggles one id in the full disabled set, both ways", () => {
+    expect(toggleThreadMcpConnector(undefined, github)).toEqual([github]);
+    expect(toggleThreadMcpConnector([linear, github], github)).toEqual([linear]);
   });
 });

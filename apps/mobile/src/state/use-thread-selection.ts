@@ -75,6 +75,9 @@ function threadDetailToShell(
     unsettledAt: thread.unsettledAt,
     activeOrderKey: thread.activeOrderKey,
     autoSettleDisabledAt: thread.autoSettleDisabledAt,
+    ...(thread.disabledMcpConnectorIds !== undefined
+      ? { disabledMcpConnectorIds: thread.disabledMcpConnectorIds }
+      : {}),
     pinnedAt: thread.pinnedAt,
     pinOrderKey: thread.pinOrderKey,
     snoozedUntil: thread.snoozedUntil ?? null,

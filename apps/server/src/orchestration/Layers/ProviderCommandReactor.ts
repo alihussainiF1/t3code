@@ -251,6 +251,10 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+  // Threads whose MCP connector opt-outs changed while a provider session was
+  // running. Providers only read MCP config at session start, so the next turn
+  // restarts the session (resuming the conversation) to apply the change.
+  const threadsWithChangedConnectors = new Set<string>();
   const compactingThreadIds = new Set<ThreadId>();
   type QueuedTurnStart = Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>;
   // Turn starts received while a thread compacts, replayed in order once its session is restored.
@@ -775,6 +779,7 @@ const make = Effect.gen(function* () {
       thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
     if (existingSessionThreadId) {
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
+      const connectorsChanged = threadsWithChangedConnectors.delete(threadId);
       const cwdChanged = effectiveCwd !== activeSession?.cwd;
       const sessionModelSwitch = (yield* providerService.getCapabilities(desiredInstanceId))
         .sessionModelSwitch;
@@ -793,6 +798,7 @@ const make = Effect.gen(function* () {
 
       if (
         !runtimeModeChanged &&
+        !connectorsChanged &&
         !cwdChanged &&
         !instanceChanged &&
         !shouldRestartForModelChange &&
@@ -815,6 +821,7 @@ const make = Effect.gen(function* () {
         currentRuntimeMode: thread.session?.runtimeMode,
         desiredRuntimeMode: thread.runtimeMode,
         runtimeModeChanged,
+        connectorsChanged,
         previousCwd: activeSession?.cwd,
         desiredCwd: effectiveCwd,
         cwdChanged,
@@ -839,6 +846,7 @@ const make = Effect.gen(function* () {
       return restartedSession.threadId;
     }
 
+    threadsWithChangedConnectors.delete(threadId);
     const startedSession = yield* startProviderSession(undefined);
     yield* bindSessionToThread(startedSession);
     return startedSession.threadId;
@@ -1901,6 +1909,10 @@ const make = Effect.gen(function* () {
       }),
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
+      if (event.type === "thread.mcp-connectors-set") {
+        threadsWithChangedConnectors.add(event.payload.threadId);
+        return;
+      }
       if (
         (event.type === "thread.meta-updated" &&
           (event.payload.regenerateTitle === true ||

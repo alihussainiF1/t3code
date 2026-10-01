@@ -34,6 +34,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { toOpenCodeMcpConfigs } from "../../mcp/connectors/McpConnectorTranslators.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
@@ -2867,6 +2868,21 @@ export function makeOpenCodeAdapter(
                 directory,
                 ...(server.serverPassword ? { serverPassword: server.serverPassword } : {}),
               });
+              // An external server is the user's own; T3 does not add servers to it.
+              if (!server.external) {
+                for (const connector of toOpenCodeMcpConfigs(
+                  McpProviderSession.readMcpConnectors(input.threadId),
+                )) {
+                  yield* runOpenCodeSdk("mcp.add", () => client.mcp.add(connector)).pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning("OpenCode rejected an MCP connector", {
+                        connector: connector.name,
+                        cause,
+                      }),
+                    ),
+                  );
+                }
+              }
               if (mcpSession && !server.external) {
                 yield* runOpenCodeSdk("mcp.add", () =>
                   client.mcp.add({

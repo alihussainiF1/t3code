@@ -72,6 +72,8 @@ import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as McpConnectorService from "./mcp/connectors/McpConnectorService.ts";
+import { mcpConnectorOAuthRouteLayer } from "./mcp/connectors/McpConnectorOAuthRoute.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -289,6 +291,14 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
 const ProviderLayerLive = ProviderServiceLive.pipe(
   Layer.provide(ProviderAdapterRegistryLive),
   Layer.provideMerge(ProviderSessionDirectoryLayerLive),
+  // Provider sessions resolve MCP connectors; the WS handlers and the OAuth
+  // callback route read the same instance (pending flows live in memory).
+  Layer.provideMerge(
+    McpConnectorService.layer().pipe(
+      Layer.provide(ServerSettingsLayerLive),
+      Layer.provide(ServerSecretStore.layer),
+    ),
+  ),
 );
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
@@ -607,6 +617,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
     attachmentUploadRouteLayer,
+    mcpConnectorOAuthRouteLayer,
     deviceHubProxyRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,

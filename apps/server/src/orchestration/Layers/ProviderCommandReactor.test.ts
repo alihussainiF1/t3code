@@ -19,6 +19,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EnvironmentId,
   EventId,
+  McpConnectorId,
   MessageId,
   ProjectId,
   ThreadId,
@@ -3135,6 +3136,48 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 2);
     expect(harness.startSession.mock.calls.length).toBe(1);
     expect(harness.stopSession.mock.calls.length).toBe(0);
+  });
+
+  it("restarts the provider session on the next turn after the thread's connectors change", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turn = (id: string) =>
+      Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-turn-start-connectors-${id}`),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId(`user-message-connectors-${id}`),
+            role: "user",
+            text: id,
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+
+    await turn("1");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.mcp-connectors.set",
+        commandId: CommandId.make("cmd-connectors-set"),
+        threadId: ThreadId.make("thread-1"),
+        disabledMcpConnectorIds: [McpConnectorId.make("linear")],
+      }),
+    );
+    await turn("2");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.startSession.mock.calls.length).toBe(2);
+
+    // Applied once: the following turn reuses the restarted session.
+    await turn("3");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 3);
+    expect(harness.startSession.mock.calls.length).toBe(2);
   });
 
   it("restarts an existing Codex thread on a compatible requested instance", async () => {
