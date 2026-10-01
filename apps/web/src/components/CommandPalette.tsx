@@ -46,6 +46,7 @@ import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
+  CheckIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
@@ -1793,30 +1794,11 @@ function OpenCommandPaletteDialog(props: {
     startAddProjectSourceSelection,
   ]);
 
-  // New project goes straight to the name step when only one environment offers it.
+  // New project starts on this device (options list it first); the name step
+  // lists the other machines when there is a choice.
   const openNewProjectFlow = () => {
-    const onlyOption =
-      newProjectEnvironmentOptions.length === 1 ? newProjectEnvironmentOptions[0] : null;
-    if (onlyOption) {
-      startNewProject(onlyOption.environmentId);
-      return;
-    }
-    pushPaletteView({
-      addonIcon: <FolderGit2Icon className={ADDON_ICON_CLASS} />,
-      groups: [
-        {
-          value: "new-project-environments",
-          label: "Environments",
-          items: newProjectEnvironmentOptions.map((option) =>
-            buildEnvironmentItem(
-              option,
-              `action:new-project:environment:${option.environmentId}`,
-              startNewProject,
-            ),
-          ),
-        },
-      ],
-    });
+    const firstOption = newProjectEnvironmentOptions[0];
+    if (firstOption) startNewProject(firstOption.environmentId);
   };
 
   useLayoutEffect(() => {
@@ -2790,6 +2772,39 @@ function OpenCommandPaletteDialog(props: {
     popView();
     if (!openedFromSources) startAddProjectSourceSelection(environmentId);
   };
+  // Switching machines keeps the typed name; the GitHub option follows the
+  // machine because source control discovery reads addProjectEnvironmentId.
+  const switchNewProjectEnvironment = (environmentId: EnvironmentId) => {
+    setNewProjectFlow({ environmentId });
+    setAddProjectEnvironmentId(environmentId);
+  };
+  const newProjectEnvironmentLabel =
+    newProjectFlow !== null && newProjectEnvironmentOptions.length > 1
+      ? (newProjectEnvironmentOptions.find(
+          (option) => option.environmentId === newProjectFlow.environmentId,
+        )?.label ?? null)
+      : null;
+  const newProjectMachineGroup: CommandPaletteView["groups"][number] | null =
+    newProjectEnvironmentLabel === null || newProjectFlow === null
+      ? null
+      : {
+          value: "new-project-machines",
+          label: "Environments",
+          items: newProjectEnvironmentOptions.map((option) => ({
+            ...buildEnvironmentItem(
+              option,
+              `new-project:environment:${option.environmentId}`,
+              switchNewProjectEnvironment,
+            ),
+            ...(option.environmentId === newProjectFlow.environmentId
+              ? {
+                  titleTrailingContent: (
+                    <CheckIcon className="ms-auto size-4 shrink-0 text-muted-foreground/70" />
+                  ),
+                }
+              : {}),
+          })),
+        };
   const newProjectExistingGroup: CommandPaletteView["groups"][number] | null =
     newProjectFlow === null
       ? null
@@ -2848,9 +2863,11 @@ function OpenCommandPaletteDialog(props: {
 
   let displayedGroups: CommandPaletteView["groups"] = filteredGroups;
   if (newProjectFlow !== null) {
-    displayedGroups = newProjectExistingGroup
-      ? [...newProjectOptionGroups, newProjectExistingGroup]
-      : newProjectOptionGroups;
+    displayedGroups = [
+      ...(newProjectMachineGroup ? [newProjectMachineGroup] : []),
+      ...newProjectOptionGroups,
+      ...(newProjectExistingGroup ? [newProjectExistingGroup] : []),
+    ];
   } else if (addProjectCloneFlow?.step === "repository") {
     displayedGroups = [];
   } else if (addProjectCloneFlow?.step === "confirm") {
@@ -3319,6 +3336,7 @@ function OpenCommandPaletteDialog(props: {
                 {newProjectName.length > 0
                   ? `Creates ${newProjectPathPreview}`
                   : `Goes in ${newProjectsRoot}`}
+                {newProjectEnvironmentLabel === null ? null : ` on ${newProjectEnvironmentLabel}`}
               </span>
             </span>
           </div>

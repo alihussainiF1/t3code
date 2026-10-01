@@ -933,7 +933,14 @@ function FolderBrowser(props: {
  */
 export function AddProjectNewScreen(props: { readonly environmentId?: string | string[] }) {
   const navigation = useNavigation();
-  const environment = useEnvironmentFromParam(props.environmentId);
+  // Starts on the machine picked in Add project; the rows below switch it.
+  const environmentOptions = useEnvironmentOptions().filter(
+    (option) => option.newProjectsRoot !== null,
+  );
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState(
+    () => stringParam(props.environmentId) as EnvironmentId | null,
+  );
+  const environment = resolveAddProjectEnvironment(environmentOptions, selectedEnvironmentId);
   const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,
@@ -1040,7 +1047,38 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
               {trimmedName.length > 0
                 ? `Creates ${pathPreview}`
                 : `Goes in ${environment.newProjectsRoot}`}
+              {environmentOptions.length > 1 ? ` on ${environment.label}` : null}
             </Text>
+          ) : null}
+          {environmentOptions.length > 1 ? (
+            <ListSection>
+              {environmentOptions.map((option, index) => (
+                <ListRow
+                  key={option.environmentId}
+                  title={option.label}
+                  icon={
+                    <EnvironmentMachineSymbol
+                      kind={option.machine}
+                      size={Platform.OS === "android" ? 24 : 17}
+                      tintColorClassName="accent-icon"
+                    />
+                  }
+                  selected={option.environmentId === environment.environmentId}
+                  isFirst={index === 0}
+                  right={
+                    option.environmentId === environment.environmentId ? (
+                      <SymbolView
+                        name="checkmark"
+                        size={Platform.OS === "android" ? 20 : 14}
+                        tintColorClassName="accent-icon"
+                        type="monochrome"
+                      />
+                    ) : null
+                  }
+                  onPress={() => setSelectedEnvironmentId(option.environmentId)}
+                />
+              ))}
+            </ListSection>
           ) : null}
           {githubTarget !== null ? (
             <ListSection>
