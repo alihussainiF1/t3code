@@ -18,6 +18,7 @@ import {
   buildPendingUserInputAnswers,
   buildThreadFeed,
   deriveThreadFeedPresentation,
+  isDividerActivityGroup,
   isPendingUserInputOptionSelected,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
@@ -483,6 +484,38 @@ describe("buildThreadFeed", () => {
         activities: [{ summary: "Compacted context 899K → 19K tokens" }],
       },
     ]);
+  });
+
+  it("keeps a provider handoff as a standalone divider row", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-provider-handoff"),
+      projectId: ProjectId.make("project-1"),
+      title: "Provider handoff",
+      activities: [
+        makeActivity({
+          id: EventId.make("runtime-note"),
+          kind: "runtime.warning",
+          summary: "Session restarted",
+          createdAt: "2026-09-01T00:00:00.000Z",
+        }),
+        makeActivity({
+          id: EventId.make("provider-handoff"),
+          kind: "provider.handoff",
+          summary: "Switched from Codex to Claude",
+          createdAt: "2026-09-01T00:00:01.000Z",
+        }),
+      ],
+    });
+
+    const groups = buildThreadFeed(thread).filter(
+      (entry): entry is Extract<ThreadFeedEntry, { type: "activity-group" }> =>
+        entry.type === "activity-group",
+    );
+    expect(groups.map((group) => group.activities.map((activity) => activity.id))).toEqual([
+      ["runtime-note"],
+      ["provider-handoff"],
+    ]);
+    expect(groups.map(isDividerActivityGroup)).toEqual([false, true]);
   });
 
   it("keeps long Claude commands expandable without repeating them in full detail", () => {

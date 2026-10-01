@@ -41,7 +41,6 @@ import {
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
-  deriveLockedProvider,
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getAntigravitySendBlockReason,
@@ -57,6 +56,7 @@ import {
   resolveComposerInteractionMode,
   restorePlanFollowUpComposer,
   resolveComposerProviderSelection,
+  resolveProviderHandoffHint,
   resolveDraftPromotionNavigationTarget,
   findRecordedWorktreeSetup,
   resolveVisibleWorktreeSetup,
@@ -1126,86 +1126,39 @@ describe("resolveComposerProviderSelection", () => {
     const importedEntry = entry(driver, instanceId);
     const entries = [entry(driver === "codex" ? "claudeAgent" : "codex"), importedEntry];
     const thread = importedThread(importedEntry.instanceId);
-    const lockedProvider = deriveLockedProvider({
-      thread,
-      selectedProvider: entries[0]!.instanceId,
-      threadProvider: thread.modelSelection.instanceId,
-      providers: entries.map((entry) => entry.snapshot),
-    });
 
     expect(thread.session).toBeNull();
-    expect(lockedProvider).toBe(driver);
     expect(
       resolveComposerProviderSelection({
         entries,
         candidateInstanceIds: [thread.modelSelection.instanceId],
-        lockedProvider,
-        lockedInstanceId: thread.modelSelection.instanceId,
       }).selectedProviderEntry?.instanceId,
     ).toBe(importedEntry.instanceId);
   });
 
-  it("keeps the session driver authoritative over instance and draft selections", () => {
+  it("lets a started thread select another driver", () => {
+    const sessionEntry = entry("codex");
     const selected = entry("claudeAgent", "claude_work");
-    const sessionEntry = entry("ollama", "local_models");
-    const thread = importedThread(selected.instanceId);
 
     expect(
-      deriveLockedProvider({
-        thread: {
-          ...thread,
-          session: {
-            ...readySession,
-            providerName: sessionEntry.driverKind,
-            providerInstanceId: sessionEntry.instanceId,
-          },
-        },
-        selectedProvider: selected.instanceId,
-        threadProvider: thread.modelSelection.instanceId,
-        providers: [selected.snapshot, sessionEntry.snapshot],
-      }),
-    ).toBe(sessionEntry.driverKind);
+      resolveComposerProviderSelection({
+        entries: [sessionEntry, selected],
+        candidateInstanceIds: [selected.instanceId, sessionEntry.instanceId],
+      }).selectedProviderEntry?.instanceId,
+    ).toBe(selected.instanceId);
   });
 
-  it.each(["missing", "disabled"] as const)(
-    "does not move imported history to another driver when its instance is %s",
-    (state) => {
-      const imported = entry("claudeAgent", "claude_work", { enabled: false });
-      const other = entry("codex");
-      const entries = state === "missing" ? [other] : [other, imported];
-      const thread = importedThread(imported.instanceId);
-      const lockedProvider = deriveLockedProvider({
-        thread,
-        selectedProvider: other.instanceId,
-        threadProvider: thread.modelSelection.instanceId,
-        providers: entries.map((entry) => entry.snapshot),
-      });
+  it("prefers the thread's driver when its instance is disabled", () => {
+    const disabled = entry("claudeAgent", "claude_work", { enabled: false });
+    const sameDriver = entry("claudeAgent");
+    const other = entry("codex");
 
-      expect(lockedProvider).not.toBeNull();
-      expect(
-        resolveComposerProviderSelection({
-          entries,
-          candidateInstanceIds: [other.instanceId, imported.instanceId],
-          lockedProvider,
-          lockedInstanceId: imported.instanceId,
-        }).selectedProviderEntry,
-      ).toBeUndefined();
-    },
-  );
-
-  it("leaves a new draft free to select a different driver", () => {
-    const original = entry("claudeAgent", "claude_work");
-    const selected = entry("codex", "codex_work");
     expect(
-      deriveLockedProvider({
-        thread: makeThread({
-          modelSelection: { instanceId: original.instanceId, model: "default" },
-        }),
-        selectedProvider: selected.instanceId,
-        threadProvider: original.instanceId,
-        providers: [original.snapshot, selected.snapshot],
-      }),
-    ).toBeNull();
+      resolveComposerProviderSelection({
+        entries: [other, disabled, sameDriver],
+        candidateInstanceIds: [disabled.instanceId],
+      }).selectedProviderEntry?.instanceId,
+    ).toBe(sameDriver.instanceId);
   });
 
   it("uses the custom instance's capability instead of the default instance", () => {
@@ -1218,8 +1171,6 @@ describe("resolveComposerProviderSelection", () => {
     const selection = resolveComposerProviderSelection({
       entries: [defaultEntry, customEntry],
       candidateInstanceIds: [customEntry.instanceId],
-      lockedProvider: null,
-      lockedInstanceId: null,
     });
 
     expect(selection.selectedProviderEntry?.instanceId).toBe(customEntry.instanceId);
@@ -1241,8 +1192,6 @@ describe("resolveComposerProviderSelection", () => {
     const selection = resolveComposerProviderSelection({
       entries: [disabledEntry, fallbackEntry],
       candidateInstanceIds: [disabledEntry.instanceId],
-      lockedProvider: null,
-      lockedInstanceId: null,
     });
 
     expect(selection.selectedProviderEntry?.instanceId).toBe(fallbackEntry.instanceId);
@@ -1264,8 +1213,6 @@ describe("resolveComposerProviderSelection", () => {
     const selection = resolveComposerProviderSelection({
       entries: [entry("codex"), signedOutEntry],
       candidateInstanceIds: [signedOutEntry.instanceId],
-      lockedProvider: null,
-      lockedInstanceId: null,
     });
 
     expect(selection.selectedProviderEntry?.instanceId).toBe(signedOutEntry.instanceId);
@@ -1349,13 +1296,11 @@ describe("resolveComposerProviderSelection", () => {
     expect(getAntigravitySendBlockReason(provider, "gpt-model")).toBeNull();
   });
 
-  it("does not continue an existing Antigravity thread in another profile after deletion", () => {
+  it("reports the requested instance when nothing can be selected", () => {
     const missingInstanceId = ProviderInstanceId.make("google_work");
     const selection = resolveComposerProviderSelection({
-      entries: [entry("antigravity")],
+      entries: [entry("antigravity", "antigravity", { enabled: false })],
       candidateInstanceIds: [missingInstanceId],
-      lockedProvider: ProviderDriverKind.make("antigravity"),
-      lockedInstanceId: missingInstanceId,
     });
 
     expect(selection.selectedProviderEntry).toBeUndefined();
@@ -1366,17 +1311,14 @@ describe("resolveComposerProviderSelection", () => {
     const selection = resolveComposerProviderSelection({
       entries: [entry("antigravity", "antigravity", { enabled: false })],
       candidateInstanceIds: [NO_PROVIDER_MODEL_SELECTION.instanceId],
-      lockedProvider: null,
-      lockedInstanceId: null,
     });
 
     expect(selection.selectedProviderEntry).toBeUndefined();
     expect(selection.unavailableProviderInstanceId).toBeUndefined();
   });
 
-  it("keeps the session's continuation group when another instance was selected", () => {
+  it("lets a started thread select an instance in another continuation group", () => {
     const sessionEntry = entry("antigravity", "google_work", {
-      enabled: false,
       continuation: { groupKey: "work-profile" },
     });
     const anotherEntry = entry("antigravity", "google_personal", {
@@ -1385,11 +1327,65 @@ describe("resolveComposerProviderSelection", () => {
     const selection = resolveComposerProviderSelection({
       entries: [sessionEntry, anotherEntry],
       candidateInstanceIds: [anotherEntry.instanceId, sessionEntry.instanceId],
-      lockedProvider: ProviderDriverKind.make("antigravity"),
-      lockedInstanceId: sessionEntry.instanceId,
     });
 
-    expect(selection.selectedProviderEntry).toBeUndefined();
+    expect(selection.selectedProviderEntry?.instanceId).toBe(anotherEntry.instanceId);
+  });
+});
+
+describe("resolveProviderHandoffHint", () => {
+  function entry(driver: string, displayName: string, groupKey?: string) {
+    return deriveProviderInstanceEntries([
+      {
+        driver: ProviderDriverKind.make(driver),
+        instanceId: ProviderInstanceId.make(displayName.replace(" ", "_")),
+        displayName,
+        enabled: true,
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        version: null,
+        checkedAt: now,
+        models: [],
+        slashCommands: [],
+        skills: [],
+        ...(groupKey ? { continuation: { groupKey } } : {}),
+      },
+    ])[0]!;
+  }
+  const codex = entry("codex", "Codex", "codex:home");
+  const codexSameHome = entry("codex", "Codex Work", "codex:home");
+  const codexOtherHome = entry("codex", "Codex Personal", "codex:other");
+  const claude = entry("claudeAgent", "Claude", "claude:home");
+  const ungrouped = entry("opencode", "OpenCode");
+  const ungroupedOther = entry("opencode", "OpenCode Work");
+  const entries = [codex, codexSameHome, codexOtherHome, claude, ungrouped, ungroupedOther];
+  const hint = (
+    from: { instanceId: ProviderInstanceId },
+    to: { instanceId: ProviderInstanceId },
+    threadStarted = true,
+  ) =>
+    resolveProviderHandoffHint({
+      threadStarted,
+      sessionProviderInstanceId: from.instanceId,
+      selectedInstanceId: to.instanceId,
+      entries,
+    });
+
+  it("names both providers when switching drivers on a started thread", () => {
+    expect(hint(codex, claude)).toEqual({ fromLabel: "Codex", toLabel: "Claude" });
+  });
+
+  it("hands off between instances that cannot share a session", () => {
+    expect(hint(codex, codexOtherHome)).toEqual({ fromLabel: "Codex", toLabel: "Codex Personal" });
+    expect(hint(ungrouped, ungroupedOther)).not.toBeNull();
+  });
+
+  it("stays quiet when the conversation resumes natively or has not started", () => {
+    expect(hint(codex, codex)).toBeNull();
+    expect(hint(codex, codexSameHome)).toBeNull();
+    expect(hint(ungrouped, ungrouped)).toBeNull();
+    expect(hint(codex, claude, false)).toBeNull();
   });
 });
 
@@ -1560,9 +1556,25 @@ describe("getStartedThreadModelChangeBlockReason", () => {
   const providers = [
     {
       instanceId: ProviderInstanceId.make("codex"),
+      driver: ProviderDriverKind.make("codex"),
+      continuation: { groupKey: "codex:home" },
     },
     {
       instanceId: ProviderInstanceId.make("grok"),
+      driver: ProviderDriverKind.make("grok"),
+      continuation: { groupKey: "grok:home" },
+      requiresNewThreadForModelChange: true,
+    },
+    {
+      instanceId: ProviderInstanceId.make("grok_work"),
+      driver: ProviderDriverKind.make("grok"),
+      continuation: { groupKey: "grok:home" },
+      requiresNewThreadForModelChange: true,
+    },
+    {
+      instanceId: ProviderInstanceId.make("grok_personal"),
+      driver: ProviderDriverKind.make("grok"),
+      continuation: { groupKey: "grok:personal" },
       requiresNewThreadForModelChange: true,
     },
   ];
@@ -1601,25 +1613,43 @@ describe("getStartedThreadModelChangeBlockReason", () => {
     ).toBeNull();
   });
 
-  it("blocks started-session model changes when either provider requires a new thread", () => {
+  it.each([
+    ["grok", "grok-other"],
+    ["grok_work", "grok-build"],
+  ])("blocks resumed-session model changes for restricted providers (%s)", (instanceId, model) => {
     expect(
       getStartedThreadModelChangeBlockReason({
         providers,
         hasStartedSession: true,
         currentModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5.4",
-        },
-        nextModelSelection: {
           instanceId: ProviderInstanceId.make("grok"),
           model: "grok-build",
         },
+        nextModelSelection: { instanceId: ProviderInstanceId.make(instanceId), model },
       }),
     ).toEqual({
       title: "Start a new chat to change models",
       description:
         "This provider does not allow switching models after a conversation has started.",
     });
+  });
+
+  it.each([
+    ["codex", "grok", "grok-build"],
+    ["grok", "codex", "gpt-5.4"],
+    ["grok", "grok_personal", "grok-build"],
+  ])("allows a handoff from %s to %s", (currentInstanceId, nextInstanceId, model) => {
+    expect(
+      getStartedThreadModelChangeBlockReason({
+        providers,
+        hasStartedSession: true,
+        currentModelSelection: {
+          instanceId: ProviderInstanceId.make(currentInstanceId),
+          model: "current-model",
+        },
+        nextModelSelection: { instanceId: ProviderInstanceId.make(nextInstanceId), model },
+      }),
+    ).toBeNull();
   });
 });
 

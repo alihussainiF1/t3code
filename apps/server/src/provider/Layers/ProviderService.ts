@@ -1461,7 +1461,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+        // A provider handoff deliberately leaves the previous native conversation
+        // behind; the orchestration layer carries the transcript instead.
         if (
+          input.replaceConversation !== true &&
           persistedBinding?.provider === resolvedProvider &&
           persistedBinding.providerInstanceId !== resolvedInstanceId &&
           (input.resumeCursor != null || persistedBinding.resumeCursor != null)

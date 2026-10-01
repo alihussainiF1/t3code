@@ -429,6 +429,28 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("generates thread summaries from a transcript", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { summary: "  Fixed the login bug.  " } }),
+        stdinMustContain: "User: fix the login bug",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadSummary({
+            cwd: process.cwd(),
+            transcript: "User: fix the login bug",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+
+          expect(generated.summary).toBe("Fixed the login bug.");
+        }),
+    ),
+  );
+
   it.effect("runs Claude text generation with the configured CLAUDE_CONFIG_DIR", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

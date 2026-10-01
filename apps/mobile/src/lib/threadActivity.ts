@@ -22,6 +22,7 @@ import {
   isWorktreeSetupActivity,
   liveActivityToolStatus,
   normalizeCompactToolLabel,
+  isTimelineDividerActivityKind,
   omitSupersededLifecycleMarkers,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
@@ -270,12 +271,13 @@ const activityRunsCache = new WeakMap<
   }
 >();
 
-export function isContextCompactionActivityGroup(
+/** Compaction and provider handoff rows render as standalone dividers. */
+export function isDividerActivityGroup(
   entry: Extract<ThreadFeedEntry, { readonly type: "activity-group" }>,
 ): boolean {
   return (
     entry.activities.length === 1 &&
-    entry.activities[0]?.workEntry.sourceActivityKind === "context-compaction"
+    isTimelineDividerActivityKind(entry.activities[0]?.workEntry.sourceActivityKind)
   );
 }
 
@@ -1583,7 +1585,7 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
     }
 
     const isStandalone =
-      entry.activity.workEntry.sourceActivityKind === "context-compaction" ||
+      isTimelineDividerActivityKind(entry.activity.workEntry.sourceActivityKind) ||
       entry.activity.workEntry.questionAnswer !== undefined;
     if (isStandalone || firstActivityEntry?.turnId !== entry.turnId) {
       flushGroup();
@@ -1718,14 +1720,14 @@ function deriveThreadFeedTurnFolds(
     if (hiddenEntryIds.size === 0) {
       continue;
     }
-    // A lone compaction row stays visible on its own; it only folds away as
+    // A lone divider row stays visible on its own; it only folds away as
     // part of a turn that already folds other work. Thinking is the same: a
     // question answered by thought alone keeps its "Thought" row
     // rather than collapsing behind a "Worked for ..." that hides nothing else.
     const hidesFoldableWork = entries.some(
       (entry) =>
         hiddenEntryIds.has(entry.id) &&
-        !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&
+        !(entry.type === "activity-group" && isDividerActivityGroup(entry)) &&
         !(entry.type === "message" && entry.message.role === "reasoning"),
     );
     if (!hidesFoldableWork) {
@@ -1901,7 +1903,7 @@ function activityRunTurnId(entry: ThreadFeedEntry): TurnId | null {
   }
   if (
     entry.type === "activity-group" &&
-    !isContextCompactionActivityGroup(entry) &&
+    !isDividerActivityGroup(entry) &&
     !isUserInputActivityGroup(entry) &&
     entry.activities.every(
       (activity) => !activity.workEntry.agentSpawn && activity.workEntry.tone !== "error",
@@ -2069,7 +2071,7 @@ function appendPresentedFeedEntry(
     result.push(entry);
     return;
   }
-  if (isContextCompactionActivityGroup(entry) || isUserInputActivityGroup(entry)) {
+  if (isDividerActivityGroup(entry) || isUserInputActivityGroup(entry)) {
     result.push(entry);
     return;
   }

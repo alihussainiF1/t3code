@@ -2140,6 +2140,98 @@ describe("CheckpointReactor", () => {
     });
   });
 
+  it.each([
+    { handoffAfter: 2, turnCount: 1, providerTurns: 1 },
+    { handoffAfter: 2, turnCount: 2, providerTurns: 1 },
+    { handoffAfter: 3, turnCount: 1, providerTurns: 0 },
+  ])(
+    "rolls back only post-handoff turns (handoff after $handoffAfter, revert to $turnCount)",
+    async ({ handoffAfter, turnCount, providerTurns }) => {
+      const harness = await createHarness({ providerName: ProviderDriverKind.make("claudeAgent") });
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const threadId = ThreadId.make("thread-1");
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-handoff"),
+          threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "claudeAgent",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        }),
+      );
+      for (const count of [1, 2, 3]) {
+        await Effect.runPromise(
+          harness.engine.dispatch({
+            type: "thread.turn.diff.complete",
+            commandId: CommandId.make(`cmd-diff-handoff-${count}`),
+            threadId,
+            turnId: asTurnId(`turn-handoff-${count}`),
+            completedAt: createdAt,
+            checkpointRef: checkpointRefForThreadTurn(threadId, count),
+            status: "ready",
+            files: [],
+            checkpointTurnCount: count,
+            createdAt,
+          }),
+        );
+      }
+      // Turns up to `handoffAfter` ran on Codex; later turns are native Claude turns.
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("cmd-handoff-activity"),
+          threadId,
+          activity: {
+            id: EventId.make("activity-handoff"),
+            tone: "info",
+            kind: "provider.handoff",
+            summary: "Switched from Codex to Claude",
+            payload: {
+              fromProviderInstanceId: "codex",
+              fromDriver: "codex",
+              toProviderInstanceId: "claudeAgent",
+              toDriver: "claudeAgent",
+              requestedAt: createdAt,
+              previousTurnId: `turn-handoff-${handoffAfter}`,
+              checkpointTurnCount: handoffAfter,
+            },
+            turnId: null,
+            createdAt,
+          },
+          createdAt,
+        }),
+      );
+
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.checkpoint.revert",
+          commandId: CommandId.make("cmd-revert-after-handoff"),
+          threadId,
+          turnCount,
+          createdAt,
+        }),
+      );
+
+      await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
+      if (providerTurns === 0) {
+        expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
+      } else {
+        expect(harness.provider.rollbackConversation).toHaveBeenCalledExactlyOnceWith({
+          threadId,
+          numTurns: providerTurns,
+        });
+      }
+    },
+  );
+
   it("processes consecutive revert requests with deterministic rollback sequencing", async () => {
     const harness = await createHarness();
     const createdAt = "2026-01-01T00:00:00.000Z";

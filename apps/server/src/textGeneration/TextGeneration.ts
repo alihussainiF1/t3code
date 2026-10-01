@@ -75,6 +75,18 @@ export interface ThreadTitleGenerationResult {
   needsRefinement?: boolean | undefined;
 }
 
+export interface ThreadSummaryGenerationInput {
+  cwd: string;
+  /** Plain-text transcript of the turns to summarize, oldest first. */
+  transcript: string;
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface ThreadSummaryGenerationResult {
+  summary: string;
+}
+
 /**
  * TextGeneration - Service tag for commit and change request text generation.
  */
@@ -106,6 +118,11 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /** Summarize earlier conversation turns so another provider can pick up the thread. */
+    readonly generateThreadSummary: (
+      input: ThreadSummaryGenerationInput,
+    ) => Effect.Effect<ThreadSummaryGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -113,7 +130,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateThreadSummary";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -165,6 +183,10 @@ export const make = Effect.gen(function* () {
             return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
           }),
         ),
+      ),
+    generateThreadSummary: (input) =>
+      resolveInstance(registry, "generateThreadSummary", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generateThreadSummary(input)),
       ),
   });
 });

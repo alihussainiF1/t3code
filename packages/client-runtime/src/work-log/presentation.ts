@@ -24,6 +24,19 @@ export function isWorktreeSetupActivity(kind: string): boolean {
   );
 }
 
+/**
+ * Activities that mark a boundary in the conversation (context compaction, a
+ * provider handoff). Web and mobile render them as standalone divider rows
+ * that never fold into a turn's work.
+ */
+export type TimelineDividerActivityKind = "context-compaction" | "provider.handoff";
+
+export function isTimelineDividerActivityKind(
+  kind: string | undefined,
+): kind is TimelineDividerActivityKind {
+  return kind === "context-compaction" || kind === "provider.handoff";
+}
+
 export type WorkLogToolLifecycleStatus = RuntimeItemStatus | "stopped";
 
 export interface WorkLogPresentationEntry {

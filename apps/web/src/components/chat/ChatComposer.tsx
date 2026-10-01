@@ -1399,7 +1399,6 @@ export interface ChatComposerProps {
   interactionMode: ProviderInteractionMode;
 
   // Provider / model
-  lockedProvider: ProviderDriverKind | null;
   providerStatuses: ServerProvider[];
   /** False until the environment's server config has arrived at least once. */
   providerCatalogKnown: boolean;
@@ -1529,7 +1528,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeProposedPlan,
     runtimeMode,
     interactionMode: requestedInteractionMode,
-    lockedProvider,
     providerStatuses,
     providerCatalogKnown,
     activeProjectDefaultModelSelection,
@@ -1875,12 +1873,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [providerStatuses, settings],
   );
   const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
-  const {
-    selectedProviderEntry,
-    requestedDriverKind,
-    lockedContinuationGroupKey,
-    unavailableProviderInstanceId,
-  } = useMemo(
+  const { selectedProviderEntry, requestedDriverKind, unavailableProviderInstanceId } = useMemo(
     () =>
       resolveComposerProviderSelection({
         entries: providerInstanceEntries,
@@ -1890,16 +1883,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           activeThreadModelSelection?.instanceId,
           activeProjectDefaultModelSelection?.instanceId,
         ],
-        lockedProvider,
-        lockedInstanceId:
-          activeThread?.session?.providerInstanceId ?? activeThreadModelSelection?.instanceId,
       }),
     [
       activeProjectDefaultModelSelection?.instanceId,
       activeThread?.session?.providerInstanceId,
       activeThreadModelSelection?.instanceId,
       selectedProviderByThreadId,
-      lockedProvider,
       providerInstanceEntries,
     ],
   );
@@ -1915,9 +1904,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const showProviderUnavailable = noProviderAvailable && !providerCatalogPending;
   const providerSetupInstanceId = noProviderAvailable
     ? (unavailableProviderInstanceId ??
-      (lockedProvider === null
-        ? providerInstanceEntries.find((entry) => hasProviderSetup(entry.snapshot))?.instanceId
-        : undefined))
+      providerInstanceEntries.find((entry) => hasProviderSetup(entry.snapshot))?.instanceId)
     : undefined;
   const resolvedCompactDisabledReason =
     compactDisabledReason ?? (noProviderAvailable ? "Compacting is unavailable right now" : null);
@@ -5074,8 +5061,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ? (activeThreadModelSelection?.model ?? selectedModelForPickerWithCustomFallback)
             : selectedModelForPickerWithCustomFallback
         }
-        lockedProvider={lockedProvider}
-        lockedContinuationGroupKey={lockedContinuationGroupKey}
         instanceEntries={providerInstanceEntries}
         keybindings={keybindings}
         modelOptionsByInstance={modelOptionsByInstance}

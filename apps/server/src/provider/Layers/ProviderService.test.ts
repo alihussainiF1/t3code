@@ -1251,6 +1251,46 @@ antigravityInstanceRouting.layer("ProviderServiceLive instance-owned conversatio
         }
       }),
   );
+
+  it.effect(
+    "starts fresh on another instance when a provider handoff replaces the conversation",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+        for (const originalAvailable of [true, false]) {
+          originalAntigravityInstanceAvailable = originalAvailable;
+          const threadId = asThreadId(`thread-antigravity-handoff-${originalAvailable}`);
+          yield* directory.upsert({
+            threadId,
+            provider: antigravityDriver,
+            providerInstanceId: originalAntigravityInstanceId,
+            status: "stopped",
+            runtimeMode: "approval-required",
+            resumeCursor: { sessionId: "native-session" },
+          });
+          replacementAntigravity.startSession.mockClear();
+
+          yield* provider.startSession(threadId, {
+            providerInstanceId: replacementAntigravityInstanceId,
+            threadId,
+            runtimeMode: "approval-required",
+            replaceConversation: true,
+          });
+
+          assert.equal(replacementAntigravity.startSession.mock.calls.length, 1);
+          assert.equal(
+            replacementAntigravity.startSession.mock.calls[0]?.[0].resumeCursor,
+            undefined,
+          );
+          const binding = yield* directory.getBinding(threadId);
+          assert.equal(
+            Option.getOrUndefined(binding)?.providerInstanceId,
+            replacementAntigravityInstanceId,
+          );
+        }
+      }),
+  );
 });
 
 const unsupportedRollback = makeProviderServiceLayer({ supportsConversationRollback: false });
@@ -5088,6 +5128,7 @@ describe("agent browser access", () => {
         getTurnStartMessage: () => Effect.die("unused"),
         getImportedAgentSessionSources: () => Effect.die("unused"),
         getUserInputActivity: () => Effect.die("unused"),
+        getLatestThreadActivityByKind: () => Effect.die("unused"),
         listActivitiesByKind: () => Effect.die("unused"),
         getCommandReadModel: () => Effect.die("unused"),
         getSnapshot: () => Effect.die("unused"),

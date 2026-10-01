@@ -4,6 +4,7 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadSummaryPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
@@ -224,6 +225,24 @@ describe("buildThreadTitlePrompt", () => {
       `Thread contents:\n[Earlier content truncated]\n\n${retainedContext}`,
     );
     expect(result.prompt.match(/\[Earlier content truncated\]/g)).toHaveLength(1);
+  });
+});
+
+describe("buildThreadSummaryPrompt", () => {
+  it("includes the transcript and truncates very long transcripts", () => {
+    const short = buildThreadSummaryPrompt({
+      transcript: "User: fix the login bug\nAssistant: Updated src/auth.ts",
+    });
+    expect(short.prompt).toContain("Return a JSON object with key: summary.");
+    expect(short.prompt).toContain(
+      "Conversation:\nUser: fix the login bug\nAssistant: Updated src/auth.ts",
+    );
+    expect(short.prompt).not.toContain("[Earlier content truncated]");
+
+    const long = buildThreadSummaryPrompt({ transcript: `${"x".repeat(70_000)}END` });
+    expect(long.prompt).toContain("[Earlier content truncated]");
+    expect(long.prompt.endsWith("END")).toBe(true);
+    expect(long.prompt).not.toContain("x".repeat(60_000));
   });
 });
 

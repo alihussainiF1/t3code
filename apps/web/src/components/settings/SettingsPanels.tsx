@@ -3152,7 +3152,6 @@ export function GeneralSettingsPanel() {
                 <ProviderModelPicker
                   activeInstanceId={textGenInstanceId}
                   model={textGenModel}
-                  lockedProvider={null}
                   instanceEntries={textGenerationModelInstanceEntries}
                   modelOptionsByInstance={textGenerationModelOptionsByInstance}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
