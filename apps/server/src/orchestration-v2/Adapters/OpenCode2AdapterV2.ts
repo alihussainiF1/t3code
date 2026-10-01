@@ -2478,7 +2478,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           .interrupt({ sessionID: Session.ID.make(childId) })
           .pipe(
             // A session that is gone runs nothing.
-            Effect.catchTag("SessionNotFoundError", () => Effect.void),
+            Effect.catchTags({ SessionNotFoundError: () => Effect.void }),
             Effect.timeout(INTERRUPT_TIMEOUT),
             Effect.tapCause((cause) =>
               Effect.logWarning("Could not stop an OpenCode subagent.", cause),
