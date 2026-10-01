@@ -2529,7 +2529,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     /**
      * Clears a staged revert and waits out the empty execution `clear` runs,
-     * which is no turn of T3's. Clearing with nothing staged is a no-op.
+     * which is no turn of T3's. 2.0.18 wakes the session after every clear,
+     * with or without a stage (seen live), so that execution always comes.
      */
     const clearRevert = Effect.fnUntraced(function* (sessionId: string) {
       const settled = yield* Deferred.make<void>();
@@ -3388,6 +3389,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         Effect.gen(function* () {
           const source = forkInput.sourceProviderThread;
           const sourceId = yield* sessionIdOf(source);
+          // OpenCode forks whatever history the source has, so a fork taken
+          // while it runs would copy a turn half done.
+          const sourceState = threads.get(sourceId);
+          if (sourceState?.active !== undefined) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: OPENCODE_PROVIDER,
+              detail: `Cannot fork OpenCode session ${sourceId} while a turn is running`,
+            });
+          }
           const selected =
             forkInput.providerTurnId === undefined
               ? undefined
@@ -3451,6 +3461,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           return providerThread;
         }).pipe(
+          exclusive(forkInput.sourceProviderThread),
           Effect.mapError((cause) =>
             isProviderAdapterError(cause)
               ? cause
