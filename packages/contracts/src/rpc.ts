@@ -25,6 +25,17 @@ import {
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
+  Automation,
+  AutomationCreateInput,
+  AutomationError,
+  AutomationIdInput,
+  AutomationListRunsInput,
+  AutomationListRunsResult,
+  AutomationRun,
+  AutomationsSnapshot,
+  AutomationUpdateInput,
+} from "./automation.ts";
+import {
   McpConnectorDiscoverInput,
   McpConnectorDiscoverResult,
   McpConnectorError,
@@ -439,6 +450,12 @@ export const WS_METHODS = {
   skillsDelete: "skills.delete",
   skillsDiscover: "skills.discover",
   skillsImport: "skills.import",
+  automationsSubscribe: "automations.subscribe",
+  automationsCreate: "automations.create",
+  automationsUpdate: "automations.update",
+  automationsDelete: "automations.delete",
+  automationsRunNow: "automations.runNow",
+  automationsListRuns: "automations.listRuns",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetHostResources: "server.getHostResources",
@@ -778,6 +795,42 @@ const WsSkillsImportRpc = Rpc.make(WS_METHODS.skillsImport, {
   payload: SkillImportInput,
   success: SkillInstallResult,
   error: SkillRpcError,
+});
+const WsAutomationsSubscribeRpc = Rpc.make(WS_METHODS.automationsSubscribe, {
+  payload: Schema.Struct({}),
+  success: AutomationsSnapshot,
+  error: Schema.Union([AutomationError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsAutomationsCreateRpc = Rpc.make(WS_METHODS.automationsCreate, {
+  payload: AutomationCreateInput,
+  success: Automation,
+  error: Schema.Union([AutomationError, EnvironmentAuthorizationError]),
+});
+
+const WsAutomationsUpdateRpc = Rpc.make(WS_METHODS.automationsUpdate, {
+  payload: AutomationUpdateInput,
+  success: Automation,
+  error: Schema.Union([AutomationError, EnvironmentAuthorizationError]),
+});
+
+const WsAutomationsDeleteRpc = Rpc.make(WS_METHODS.automationsDelete, {
+  payload: AutomationIdInput,
+  success: Schema.Struct({}),
+  error: Schema.Union([AutomationError, EnvironmentAuthorizationError]),
+});
+
+const WsAutomationsRunNowRpc = Rpc.make(WS_METHODS.automationsRunNow, {
+  payload: AutomationIdInput,
+  success: AutomationRun,
+  error: Schema.Union([AutomationError, EnvironmentAuthorizationError]),
+});
+
+const WsAutomationsListRunsRpc = Rpc.make(WS_METHODS.automationsListRuns, {
+  payload: AutomationListRunsInput,
+  success: AutomationListRunsResult,
+  error: Schema.Union([AutomationError, EnvironmentAuthorizationError]),
 });
 
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1629,6 +1682,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsSkillsDeleteRpc,
   WsSkillsDiscoverRpc,
   WsSkillsImportRpc,
+  WsAutomationsSubscribeRpc,
+  WsAutomationsCreateRpc,
+  WsAutomationsUpdateRpc,
+  WsAutomationsDeleteRpc,
+  WsAutomationsRunNowRpc,
+  WsAutomationsListRunsRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,

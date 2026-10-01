@@ -9,6 +9,7 @@ import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { useServerConfigs } from "../../state/entities";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -130,6 +131,9 @@ function LocalSettingsRouteScreen() {
 function SettingsIndexSections() {
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
   const noServerTargets = selectedTargets.length === 0;
+  const automationsSupported = [...useServerConfigs().values()].some(
+    (config) => config.environment.capabilities.automations === true,
+  );
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const scopedProjectMembers =
     selectedProject?.members
@@ -165,6 +169,9 @@ function SettingsIndexSections() {
         <SettingsRow icon="folder" label="Organization" target="SettingsOrganization" />
         <SettingsRow icon="text.bubble" label="Thread behavior" target="SettingsThreads" />
         <SettingsRow icon="archivebox" label="Archived Threads" target="SettingsArchive" />
+        {automationsSupported ? (
+          <SettingsRow icon="timer" label="Automations" target="SettingsAutomations" />
+        ) : null}
       </SettingsSection>
 
       <SettingsSection title="Server settings">

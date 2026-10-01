@@ -168,6 +168,7 @@ import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import { McpConnectorService } from "./mcp/connectors/McpConnectorService.ts";
 import { SkillLibrary } from "./skills/SkillLibrary.ts";
+import { AutomationService } from "./automation/AutomationService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
@@ -658,6 +659,7 @@ const makeWsRpcLayer = (
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const mcpConnectors = yield* McpConnectorService;
       const skillLibrary = yield* SkillLibrary;
+      const automations = yield* AutomationService;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
           (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
@@ -2951,6 +2953,32 @@ const makeWsRpcLayer = (
         [WS_METHODS.skillsImport]: (input) =>
           observeRpcEffect(WS_METHODS.skillsImport, skillLibrary.importSkills(input), {
             "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.automationsSubscribe]: () =>
+          observeRpcStream(WS_METHODS.automationsSubscribe, automations.subscribe, {
+            "rpc.aggregate": "automation",
+          }),
+        [WS_METHODS.automationsCreate]: (input) =>
+          observeRpcEffect(WS_METHODS.automationsCreate, automations.create(input), {
+            "rpc.aggregate": "automation",
+          }),
+        [WS_METHODS.automationsUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.automationsUpdate, automations.update(input), {
+            "rpc.aggregate": "automation",
+          }),
+        [WS_METHODS.automationsDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.automationsDelete,
+            automations.remove(input.id).pipe(Effect.as({})),
+            { "rpc.aggregate": "automation" },
+          ),
+        [WS_METHODS.automationsRunNow]: (input) =>
+          observeRpcEffect(WS_METHODS.automationsRunNow, automations.runNow(input.id), {
+            "rpc.aggregate": "automation",
+          }),
+        [WS_METHODS.automationsListRuns]: (input) =>
+          observeRpcEffect(WS_METHODS.automationsListRuns, automations.listRuns(input), {
+            "rpc.aggregate": "automation",
           }),
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
           observeRpcEffect(

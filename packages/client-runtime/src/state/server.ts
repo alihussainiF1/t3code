@@ -969,11 +969,43 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
   }) => welcomeFamily(target.environmentId);
 
+  const automations = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:automations:state",
+    tag: WS_METHODS.automationsSubscribe,
+  });
+
   return {
     configValueAtom,
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,
+    automations,
+    automationRuns: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:automations:runs",
+      tag: WS_METHODS.automationsListRuns,
+      // Every automation change re-sends the list; history follows it.
+      refreshTrigger: ({ environmentId }) => automations({ environmentId, input: {} }),
+    }),
+    createAutomation: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:automations:create",
+      tag: WS_METHODS.automationsCreate,
+    }),
+    updateAutomation: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:automations:update",
+      tag: WS_METHODS.automationsUpdate,
+    }),
+    deleteAutomation: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:automations:delete",
+      tag: WS_METHODS.automationsDelete,
+    }),
+    runAutomationNow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:automations:run-now",
+      tag: WS_METHODS.automationsRunNow,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.id]),
+      },
+    }),
     providerAuthState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:provider:auth-state",
       tag: WS_METHODS.providerAuthSubscribe,

@@ -16,6 +16,8 @@ import { OrchestrationReactor } from "../Services/OrchestrationReactor.ts";
 import { makeOrchestrationReactor } from "./OrchestrationReactor.ts";
 import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
 import { StorageCleanup } from "../../storageCleanup.ts";
+import { AutomationService } from "../../automation/AutomationService.ts";
+import * as Stream from "effect/Stream";
 
 describe("OrchestrationReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<OrchestrationReactor, never> | null = null;
@@ -32,6 +34,22 @@ describe("OrchestrationReactor", () => {
 
     runtime = ManagedRuntime.make(
       Layer.effect(OrchestrationReactor, makeOrchestrationReactor).pipe(
+        Layer.provideMerge(
+          Layer.succeed(AutomationService, {
+            subscribe: Stream.empty,
+            create: () => Effect.die("unused"),
+            update: () => Effect.die("unused"),
+            remove: () => Effect.die("unused"),
+            runNow: () => Effect.die("unused"),
+            listRuns: () => Effect.die("unused"),
+            start: () => {
+              started.push("automations");
+              return Effect.void;
+            },
+            tick: Effect.void,
+            drain: Effect.void,
+          }),
+        ),
         Layer.provideMerge(
           Layer.succeed(StorageCleanup, {
             start: () => {
@@ -132,6 +150,7 @@ describe("OrchestrationReactor", () => {
       "pull-request-sync-reactor",
       "agent-awareness-relay",
       "storage-cleanup",
+      "automations",
     ]);
 
     await Effect.runPromise(Scope.close(scope, Exit.void));

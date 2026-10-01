@@ -140,6 +140,7 @@ import * as ProviderService from "./provider/Services/ProviderService.ts";
 import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
 import { McpConnectorService } from "./mcp/connectors/McpConnectorService.ts";
 import { SkillLibrary } from "./skills/SkillLibrary.ts";
+import { AutomationService } from "./automation/AutomationService.ts";
 import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
 import {
   AntigravityInstallation,
@@ -830,6 +831,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(ProviderAuthService)({
             ...options?.layers?.providerAuth,
           }),
+          Layer.mock(AutomationService)({}),
           Layer.mock(McpConnectorService)({
             discover: () => Effect.succeed({ servers: [] }),
           }),
