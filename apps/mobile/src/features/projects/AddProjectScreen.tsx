@@ -15,6 +15,9 @@ import {
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
+  getNewProjectGitHubRepository,
+  getNewProjectGitHubTarget,
+  getNewProjectPathPreview,
   normalizePastedCloneUrl,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
@@ -61,6 +64,7 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/App
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ErrorBanner } from "../../components/ErrorBanner";
 import { SourceControlIcon } from "../../components/SourceControlIcon";
+import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { uuidv4 } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
@@ -77,6 +81,8 @@ interface EnvironmentOption {
   readonly platform: string;
   readonly machine: EnvironmentMachineKind;
   readonly baseDirectory: string | null;
+  /** Folder for projects started from just a name; null on servers without it. */
+  readonly newProjectsRoot: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
@@ -399,6 +405,7 @@ function useEnvironmentOptions(): ReadonlyArray<EnvironmentOption> {
         platform: platformFromOs(config?.environment.platform.os ?? null),
         machine: resolveEnvironmentMachineKind(config ?? null),
         baseDirectory: config?.settings.addProjectBaseDirectory ?? null,
+        newProjectsRoot: config?.newProjectsRoot ?? null,
         connectionState: runtime?.connectionState ?? "available",
         connectionError: runtime?.connectionError ?? null,
         connectionErrorTraceId: runtime?.connectionErrorTraceId ?? null,
@@ -578,6 +585,28 @@ export function AddProjectSourceScreen() {
       {selectedEnvironment ? (
         <>
           <ListSection>
+            {selectedEnvironment.newProjectsRoot !== null ? (
+              <ListRow
+                title="New project"
+                subtitle="Start a new Git repository from a name"
+                icon={
+                  <SymbolView
+                    name="plus"
+                    size={Platform.OS === "android" ? 24 : 17}
+                    tintColorClassName="accent-icon"
+                    type="monochrome"
+                  />
+                }
+                isFirst
+                onPress={() =>
+                  navigation.dispatch(
+                    StackActions.push("AddProjectNew", {
+                      environmentId: selectedEnvironment.environmentId,
+                    }),
+                  )
+                }
+              />
+            ) : null}
             <ListRow
               title="Local folder"
               subtitle="Browse a folder on disk"
@@ -589,7 +618,7 @@ export function AddProjectSourceScreen() {
                   type="monochrome"
                 />
               }
-              isFirst
+              isFirst={selectedEnvironment.newProjectsRoot === null}
               onPress={() =>
                 navigation.dispatch(
                   StackActions.push("AddProjectLocal", {
@@ -895,6 +924,168 @@ function FolderBrowser(props: {
         ))}
       </ListSection>
     </>
+  );
+}
+
+/**
+ * New project: a name, then the server makes the folder, README, icon, and
+ * first commit. Optionally publishes it to GitHub as a private repository.
+ */
+export function AddProjectNewScreen(props: { readonly environmentId?: string | string[] }) {
+  const navigation = useNavigation();
+  const environment = useEnvironmentFromParam(props.environmentId);
+  const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
+  const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
+    reportFailure: false,
+  });
+  const discoveryState = useEnvironmentQuery(
+    environment === null
+      ? null
+      : sourceControlEnvironment.discovery({
+          environmentId: environment.environmentId,
+          input: {},
+        }),
+  );
+  const githubTarget = getNewProjectGitHubTarget(discoveryState.data);
+  const [name, setName] = useState("");
+  const [publishesToGitHub, setPublishesToGitHub] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const trimmedName = name.trim();
+  const pathPreview =
+    environment?.newProjectsRoot != null
+      ? getNewProjectPathPreview(environment.newProjectsRoot, trimmedName)
+      : null;
+
+  const submit = async () => {
+    if (!environment || trimmedName.length === 0 || isSubmitting) return;
+    setError(null);
+    setIsSubmitting(true);
+    const result = await createNew({
+      environmentId: environment.environmentId,
+      input: { name: trimmedName },
+    });
+    if (AsyncResult.isFailure(result)) {
+      setError(errorMessage(Cause.squash(result.cause)));
+      setIsSubmitting(false);
+      return;
+    }
+    const { projectId, workspaceRoot, commitError } = result.value;
+    if (commitError !== undefined) {
+      Alert.alert("Created without a first commit", commitError);
+    }
+    if (publishesToGitHub && githubTarget !== null) {
+      void publishRepository({
+        environmentId: environment.environmentId,
+        input: {
+          cwd: workspaceRoot,
+          provider: "github",
+          repository: getNewProjectGitHubRepository(githubTarget, workspaceRoot),
+          visibility: "private",
+        },
+      }).then((publishResult) => {
+        if (AsyncResult.isFailure(publishResult)) {
+          Alert.alert(
+            "Could not create the GitHub repository",
+            errorMessage(Cause.squash(publishResult.cause)),
+          );
+        }
+      });
+    }
+    // The draft screen resolves its project from the client store, so wait
+    // for the create event before opening it.
+    await waitForProject({ environmentId: environment.environmentId, projectId }, 15_000);
+    setIsSubmitting(false);
+    openNewTaskDraft(navigation, {
+      environmentId: environment.environmentId,
+      projectId,
+      title: trimmedName,
+    });
+  };
+
+  return (
+    <AddProjectShell title="New project">
+      {error ? <ErrorBanner message={error} /> : null}
+      {environment ? (
+        <>
+          <TextInput
+            className="h-12 min-h-12 rounded-[24px] px-4 py-0 text-base leading-snug"
+            value={name}
+            onChangeText={setName}
+            autoCorrect={false}
+            autoFocus
+            placeholder="Project name"
+            returnKeyType="done"
+            onSubmitEditing={() => void submit()}
+          />
+          {pathPreview !== null ? (
+            <Text className="px-1 text-sm leading-snug text-foreground-muted" numberOfLines={2}>
+              {trimmedName.length > 0
+                ? `Creates ${pathPreview}`
+                : `Goes in ${environment.newProjectsRoot}`}
+            </Text>
+          ) : null}
+          {githubTarget !== null ? (
+            <ListSection>
+              <ListRow
+                title="Create private repository on GitHub"
+                subtitle={
+                  trimmedName.length > 0 && pathPreview !== null
+                    ? getNewProjectGitHubRepository(githubTarget, pathPreview)
+                    : githubTarget.account
+                }
+                icon={
+                  <SourceControlIcon
+                    kind="github"
+                    size={Platform.OS === "android" ? 24 : 18}
+                    colorClassName="accent-icon"
+                  />
+                }
+                isFirst
+                right={
+                  <ThemedSwitch
+                    accessibilityLabel="Create private repository on GitHub"
+                    value={publishesToGitHub}
+                    onValueChange={setPublishesToGitHub}
+                  />
+                }
+                onPress={() => setPublishesToGitHub((publishes) => !publishes)}
+              />
+            </ListSection>
+          ) : null}
+          <PrimaryActionButton
+            label="Create project"
+            disabled={isSubmitting || trimmedName.length === 0}
+            onPress={() => void submit()}
+            loading={isSubmitting}
+          />
+          <ListSection>
+            <ListRow
+              title="Add existing project"
+              subtitle="Open a folder or clone a repository"
+              icon={
+                <SymbolView
+                  name="folder.badge.plus"
+                  size={Platform.OS === "android" ? 24 : 17}
+                  tintColorClassName="accent-icon"
+                  type="monochrome"
+                />
+              }
+              isFirst
+              // New project opens from Add project, so going back shows the
+              // other sources. A deep link has nothing behind it.
+              onPress={() =>
+                navigation.canGoBack()
+                  ? navigation.goBack()
+                  : navigation.dispatch(StackActions.replace("AddProject"))
+              }
+            />
+          </ListSection>
+        </>
+      ) : (
+        <EmptyEnvironmentState />
+      )}
+    </AddProjectShell>
   );
 }
 

@@ -53,3 +53,20 @@ export function normalizeProjectPathForComparison(value: string): string {
   }
   return normalized;
 }
+
+/**
+ * Folder name for a project started from just a name ("Pinball Stats" becomes
+ * "pinball-stats"). The server uses it for `projects.createNew`, and clients
+ * use it to show the path before the server makes it.
+ */
+export function newProjectFolderName(name: string): string {
+  const slug = name
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 64)
+    .replace(/-+$/, "");
+  return slug.length > 0 ? slug : "project";
+}
