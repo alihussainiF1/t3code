@@ -6,10 +6,13 @@ import {
   ProjectScript,
   ProviderDriverKind,
   ProviderInstanceId,
+  REDACTED_SECRET_VALUE,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
+  UsageLimitSourceId,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -1411,6 +1414,133 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           yield* fileSystem.readFileString(serverConfig.settingsPath),
           "hand-edited-token",
         );
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect(
+    "moves plaintext Antigravity API keys and hub keys out of settings.json into the secret store",
+    () =>
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("antigravity_work");
+        const readSecretText = (name: string) =>
+          secrets
+            .get(name)
+            .pipe(
+              Effect.map((secret) =>
+                Option.isSome(secret) ? new TextDecoder().decode(secret.value) : null,
+              ),
+            );
+        const apiKeyOf = (settings: ServerSettings) => {
+          const config = settings.providerInstances[instanceId]?.config;
+          return config !== null && typeof config === "object"
+            ? (config as { readonly apiKey?: string }).apiKey
+            : undefined;
+        };
+        const instanceSecretName = `provider-config-${Buffer.from(instanceId).toString("base64url")}-${Buffer.from("apiKey").toString("base64url")}`;
+        // Written by an older build that kept these in plain text.
+        yield* fileSystem.writeFileString(
+          serverConfig.settingsPath,
+          `{
+            "providers": { "antigravity": { "authMethod": "gemini-api-key", "apiKey": "legacy-ag-key" } },
+            "providerInstances": {
+              "${instanceId}": {
+                "driver": "antigravity",
+                "config": { "authMethod": "gemini-api-key", "apiKey": "instance-ag-key" }
+              }
+            },
+            "usageLimitSources": {
+              "hub": { "kind": "cliproxy", "url": "https://hub.example.com", "managementKey": "hub-key" }
+            }
+          }`,
+        );
+
+        const loaded = yield* serverSettings.getSettings;
+
+        // Readers still see the real values.
+        assert.equal(loaded.providers.antigravity.apiKey, "legacy-ag-key");
+        assert.equal(apiKeyOf(loaded), "instance-ag-key");
+        assert.equal(
+          loaded.usageLimitSources[UsageLimitSourceId.make("hub")]?.managementKey,
+          "hub-key",
+        );
+        // The file no longer holds them; the secret store does.
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        for (const secret of ["legacy-ag-key", "instance-ag-key", "hub-key"]) {
+          assert.notInclude(raw, secret);
+        }
+        assert.equal(yield* readSecretText(instanceSecretName), "instance-ag-key");
+
+        // Clients only learn that a key is set.
+        const forClient = ServerSettingsModule.redactServerSettingsForClient(loaded);
+        assert.equal(apiKeyOf(forClient), REDACTED_SECRET_VALUE);
+        assert.equal(forClient.providers.antigravity.apiKey, REDACTED_SECRET_VALUE);
+
+        // Echoing the marker back keeps the key; omitting the field clears it.
+        const kept = yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("antigravity"),
+              config: {
+                ...(forClient.providerInstances[instanceId]?.config as object),
+                gcpLocation: "us-central1",
+              },
+            },
+          },
+        });
+        assert.equal(apiKeyOf(kept), "instance-ag-key");
+        const cleared = yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("antigravity"),
+              config: { authMethod: "gemini-api-key" },
+            },
+          },
+        });
+        assert.isUndefined(apiKeyOf(cleared));
+        assert.isNull(yield* readSecretText(instanceSecretName));
+
+        // A new key typed by the user goes straight to the store.
+        yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("antigravity"),
+              config: { authMethod: "gemini-api-key", apiKey: "new-ag-key" },
+            },
+          },
+        });
+        assert.notInclude(
+          yield* fileSystem.readFileString(serverConfig.settingsPath),
+          "new-ag-key",
+        );
+        assert.equal(yield* readSecretText(instanceSecretName), "new-ag-key");
+      }).pipe(Effect.provide(makeServerSettingsLayerWithSecrets())),
+  );
+
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "keeps settings.json private to the owner",
+    () =>
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const modeOf = (path: string) =>
+          fileSystem.stat(path).pipe(Effect.map((info) => info.mode & 0o777));
+        // An older build left it world-readable.
+        yield* fileSystem.writeFileString(serverConfig.settingsPath, "{}");
+        yield* fileSystem.chmod(serverConfig.settingsPath, 0o644);
+
+        yield* serverSettings.start;
+        assert.equal(yield* modeOf(serverConfig.settingsPath), 0o600);
+
+        yield* fileSystem.remove(serverConfig.settingsPath);
+        yield* serverSettings.updateSettings({ cursorKeychainUsageEnabled: true });
+        assert.equal(yield* modeOf(serverConfig.settingsPath), 0o600);
+        // The state directory holding it is private too.
+        assert.equal(yield* modeOf(serverConfig.stateDir), 0o700);
       }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 

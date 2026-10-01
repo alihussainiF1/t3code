@@ -3,14 +3,16 @@
 import { useMemo, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type {
-  ProviderSettingsFormAnnotation,
-  ProviderSettingsFormControl,
-  ProviderSettingsFormOption,
-  ProviderSettingsFormSchemaAnnotation,
+import {
+  REDACTED_SECRET_VALUE,
+  type ProviderSettingsFormAnnotation,
+  type ProviderSettingsFormControl,
+  type ProviderSettingsFormOption,
+  type ProviderSettingsFormSchemaAnnotation,
 } from "@t3tools/contracts";
 
 import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -246,6 +248,29 @@ function ProviderSettingsFieldRow({
   const description = field.description ? (
     <span className={descriptionClassName}>{field.description}</span>
   ) : null;
+  // Password fields are write-only: the server sends a marker when a secret is saved,
+  // never the secret. Typing replaces it and Remove clears it.
+  const storedText = readProviderConfigString(value, field.key);
+  const secretSaved = field.control === "password" && storedText === REDACTED_SECRET_VALUE;
+  const textValue = secretSaved ? "" : storedText;
+  const textPlaceholder = secretSaved
+    ? "Stored secret, enter a new value to replace"
+    : field.placeholder;
+  const withRemoveSecret = (input: ReactNode) =>
+    secretSaved ? (
+      <div className="flex items-center gap-2">
+        {input}
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={() => onChange(nextProviderConfigWithFieldValue(value, field, ""))}
+        >
+          Remove
+        </Button>
+      </div>
+    ) : (
+      input
+    );
 
   if (variant === "settings") {
     const descriptionId = field.description ? `${inputId}-description` : undefined;
@@ -281,18 +306,20 @@ function ProviderSettingsFieldRow({
           spellCheck={false}
         />
       ) : (
-        <DraftInput
-          id={inputId}
-          aria-describedby={descriptionId}
-          size="sm"
-          className="w-full max-w-full @min-[32rem]/settings-row:w-56"
-          type={field.control === "password" ? "password" : undefined}
-          autoComplete={field.control === "password" ? "off" : undefined}
-          value={readProviderConfigString(value, field.key)}
-          onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
-          placeholder={field.placeholder}
-          spellCheck={false}
-        />
+        withRemoveSecret(
+          <DraftInput
+            id={inputId}
+            aria-describedby={descriptionId}
+            size="sm"
+            className="w-full max-w-full @min-[32rem]/settings-row:w-56"
+            type={field.control === "password" ? "password" : undefined}
+            autoComplete={field.control === "password" ? "off" : undefined}
+            value={textValue}
+            onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
+            placeholder={textPlaceholder}
+            spellCheck={false}
+          />,
+        )
       );
 
     return (
@@ -373,30 +400,32 @@ function ProviderSettingsFieldRow({
     <FieldFrame variant={variant}>
       <label htmlFor={inputId} className={cn(variant === "card" && "block")}>
         {label}
-        {variant === "card" ? (
-          <DraftInput
-            id={inputId}
-            size="sm"
-            className="mt-1.5"
-            type={type}
-            autoComplete={field.control === "password" ? "off" : undefined}
-            value={readProviderConfigString(value, field.key)}
-            onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
-            placeholder={field.placeholder}
-            spellCheck={false}
-          />
-        ) : (
-          <Input
-            id={inputId}
-            type={type}
-            autoComplete={field.control === "password" ? "off" : undefined}
-            value={readProviderConfigString(value, field.key)}
-            onChange={(event) =>
-              onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
-            }
-            placeholder={field.placeholder}
-            spellCheck={false}
-          />
+        {withRemoveSecret(
+          variant === "card" ? (
+            <DraftInput
+              id={inputId}
+              size="sm"
+              className="mt-1.5"
+              type={type}
+              autoComplete={field.control === "password" ? "off" : undefined}
+              value={textValue}
+              onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
+              placeholder={textPlaceholder}
+              spellCheck={false}
+            />
+          ) : (
+            <Input
+              id={inputId}
+              type={type}
+              autoComplete={field.control === "password" ? "off" : undefined}
+              value={textValue}
+              onChange={(event) =>
+                onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
+              }
+              placeholder={textPlaceholder}
+              spellCheck={false}
+            />
+          ),
         )}
         {description}
       </label>

@@ -17,6 +17,7 @@ import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
+import { OWNER_ONLY_DIRECTORY_MODE, restrictToOwner } from "./ownerOnlyPermissions.ts";
 import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 
@@ -168,9 +169,16 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
+  // Settings, the database, and secrets live in the state directory, so it is created
+  // before its children and kept owner-only. Only this directory is T3's alone; the base
+  // directory may be a user-chosen --home-dir and is left as is.
+  yield* fs.makeDirectory(derivedPaths.stateDir, {
+    recursive: true,
+    mode: OWNER_ONLY_DIRECTORY_MODE,
+  });
+  yield* restrictToOwner(derivedPaths.stateDir, OWNER_ONLY_DIRECTORY_MODE);
   yield* Effect.all(
     [
-      fs.makeDirectory(derivedPaths.stateDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.logsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.providerLogsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.terminalLogsDir, { recursive: true }),

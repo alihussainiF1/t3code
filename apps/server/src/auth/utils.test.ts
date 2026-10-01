@@ -3,8 +3,50 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   deriveAuthClientMetadata,
   isRemoteReachableHost,
+  isTrustedRequestOrigin,
   resolveSessionCookieName,
 } from "./utils.ts";
+
+describe("isTrustedRequestOrigin", () => {
+  const isTrusted = (headers: Record<string, string>, devUrl?: URL) =>
+    isTrustedRequestOrigin({ headers } as never, {
+      allowedOrigins: [],
+      devUrl,
+    });
+
+  it("accepts the server's own origin, including default ports and case", () => {
+    expect(isTrusted({ host: "box.example.com", origin: "https://Box.Example.com" })).toBe(true);
+    expect(isTrusted({ host: "box.example.com:443", origin: "https://box.example.com" })).toBe(
+      true,
+    );
+    expect(isTrusted({ host: "[::1]:3773", origin: "http://[::1]:3773" })).toBe(true);
+    expect(isTrusted({ host: "127.0.0.1:3773" })).toBe(true);
+  });
+
+  it("rejects other ports, opaque origins, and non-web schemes", () => {
+    expect(isTrusted({ host: "127.0.0.1:3773", origin: "http://127.0.0.1:5173" })).toBe(false);
+    expect(isTrusted({ host: "127.0.0.1:3773", origin: "http://localhost:3773" })).toBe(false);
+    expect(isTrusted({ host: "127.0.0.1:3773", origin: "null" })).toBe(false);
+    expect(isTrusted({ host: "app", origin: "t3code://app" })).toBe(false);
+  });
+
+  it("accepts the proxy's public authority and, in dev, the Vite port", () => {
+    expect(
+      isTrusted({
+        host: "127.0.0.1:3773",
+        "x-forwarded-host": "box.tail1234.ts.net",
+        origin: "https://box.tail1234.ts.net",
+      }),
+    ).toBe(true);
+    const devUrl = new URL("http://localhost:5733");
+    expect(isTrusted({ host: "127.0.0.1:3773", origin: "http://192.168.1.4:5733" }, devUrl)).toBe(
+      true,
+    );
+    expect(isTrusted({ host: "127.0.0.1:3773", origin: "http://127.0.0.1:5173" }, devUrl)).toBe(
+      false,
+    );
+  });
+});
 
 describe("deriveAuthClientMetadata", () => {
   it("labels Electron user agents as Electron instead of Chrome", () => {

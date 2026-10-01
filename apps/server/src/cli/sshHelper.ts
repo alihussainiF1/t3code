@@ -7,6 +7,7 @@ import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 
+import { resolveReusableRuntimeServer } from "@t3tools/ssh/runtimeReuse";
 import * as Effect from "effect/Effect";
 import { Argument, Command } from "effect/unstable/cli";
 
@@ -87,7 +88,7 @@ const waitReady = Command.make("wait-ready", {
   ),
 );
 
-/** Prints `<pid> <port>` for a live default-home server, or exits 1. */
+/** Prints `<pid> <port>` for a live, loopback-bound default-home server, or exits 1. */
 const runtimePort = Command.make("runtime-port", {
   runtimeFile: Argument.String("runtime-file"),
 }).pipe(
@@ -95,22 +96,13 @@ const runtimePort = Command.make("runtime-port", {
     Effect.sync(() => {
       try {
         // @effect-diagnostics-next-line preferSchemaOverJson:off - mirrors the shell snippet's loose parse.
-        const runtime = JSON.parse(NodeFS.readFileSync(runtimeFile, "utf8")) as {
-          pid?: unknown;
-          port?: unknown;
-          origin?: unknown;
-        };
-        const pid = Number(runtime.pid);
-        const port = Number(runtime.port);
-        if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port)) {
+        const runtime: unknown = JSON.parse(NodeFS.readFileSync(runtimeFile, "utf8"));
+        const reusable = resolveReusableRuntimeServer(runtime);
+        if (reusable === null) {
           process.exitCode = 1;
           return;
         }
-        const origin = new URL(String(runtime.origin ?? ""));
-        if (origin.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(origin.hostname)) {
-          process.exitCode = 1;
-          return;
-        }
+        const { pid, port } = reusable;
         process.kill(pid, 0);
         process.stdout.write(`${pid} ${port}`);
       } catch {

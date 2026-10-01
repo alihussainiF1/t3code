@@ -33,6 +33,7 @@ import {
   baseSshArgs,
   buildSshHostSpecEffect,
   collectProcessOutput,
+  describeSshHostKeyFailure,
   getLastNonEmptyOutputLine,
   remoteStateKey,
   resolveSshCommand,
@@ -49,6 +50,7 @@ import {
   SshPasswordPromptError,
   SshReadinessError,
 } from "./errors.ts";
+import { resolveReusableRuntimeServer } from "./runtimeReuse.ts";
 
 const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
@@ -542,6 +544,28 @@ fi
 exec "$T3_RUNTIME_DIR/t3" "$@"
 `;
 
+// The launch state dir holds the server log, pid, and runner, so it stays
+// private to the remote user. The umask is scoped to the subshell: the server
+// itself must keep the user's umask for files it writes into projects.
+const REMOTE_PRIVATE_STATE_DIR_SCRIPT = `(umask 077 && mkdir -p "$STATE_DIR")
+chmod 700 "$HOME/.t3/ssh-launch" "$STATE_DIR"`;
+
+// Prints `<pid> <port>` for a live default-home server the launch may reuse.
+// Mirrors `__ssh-helper runtime-port` for node-script runners.
+const REMOTE_RUNTIME_PORT_SCRIPT = `const fs = require("node:fs");
+const resolveReusableRuntimeServer = ${resolveReusableRuntimeServer.toString()};
+try {
+  const runtime = JSON.parse(fs.readFileSync(process.argv[2] ?? "", "utf8"));
+  const reusable = resolveReusableRuntimeServer(runtime);
+  if (reusable === null) {
+    process.exit(1);
+  }
+  process.kill(reusable.pid, 0);
+  process.stdout.write(String(reusable.pid) + " " + String(reusable.port));
+} catch {
+  process.exit(1);
+}`;
+
 const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
@@ -554,7 +578,9 @@ MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
-mkdir -p "$STATE_DIR"
+@@T3_PRIVATE_STATE_DIR_SCRIPT@@
+(umask 077 && : >>"$LOG_FILE")
+chmod 600 "$LOG_FILE"
 cleanup_runner_next() {
   rm -f "$RUNNER_NEXT"
 }
@@ -610,24 +636,7 @@ resolve_default_runtime_port() {
     return
   fi
   node - "$DEFAULT_RUNTIME_FILE" <<'NODE'
-const fs = require("node:fs");
-const runtimePath = process.argv[2] ?? "";
-try {
-	  const runtime = JSON.parse(fs.readFileSync(runtimePath, "utf8"));
-	  const pid = Number(runtime.pid);
-	  const port = Number(runtime.port);
-	  if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port)) {
-	    process.exit(1);
-	  }
-  const origin = new URL(String(runtime.origin ?? ""));
-  if (origin.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(origin.hostname)) {
-    process.exit(1);
-  }
-  process.kill(pid, 0);
-  process.stdout.write(\`\${pid} \${port}\`);
-} catch {
-  process.exit(1);
-}
+@@T3_RUNTIME_PORT_SCRIPT@@
 NODE
 }
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
@@ -668,7 +677,9 @@ if [ -n "$DEFAULT_REMOTE_PORT" ]; then
   fi
 fi
 if [ "$REMOTE_MANAGED" = "external" ]; then
-  if [ -z "$REMOTE_PORT" ] || ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+  # Only keep reusing an external server while the default runtime file still
+  # vouches for it on this port; it may have restarted on a public interface.
+  if [ -z "$REMOTE_PORT" ] || [ "$REMOTE_PORT" != "$DEFAULT_REMOTE_PORT" ] || ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""
@@ -727,7 +738,7 @@ const REMOTE_PAIRING_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 DEFAULT_SERVER_HOME="$HOME/.t3"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
-mkdir -p "$STATE_DIR"
+@@T3_PRIVATE_STATE_DIR_SCRIPT@@
 cat >"$RUNNER_FILE" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
@@ -834,6 +845,8 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
     T3_PICK_PORT_SCRIPT: stripTrailingNewlines(REMOTE_PICK_PORT_SCRIPT),
     T3_WAIT_READY_SCRIPT: stripTrailingNewlines(REMOTE_WAIT_READY_SCRIPT),
+    T3_RUNTIME_PORT_SCRIPT: REMOTE_RUNTIME_PORT_SCRIPT,
+    T3_PRIVATE_STATE_DIR_SCRIPT: REMOTE_PRIVATE_STATE_DIR_SCRIPT,
     T3_DEFAULT_REMOTE_PORT: String(DEFAULT_REMOTE_PORT),
     T3_REMOTE_PORT_SCAN_WINDOW: String(REMOTE_PORT_SCAN_WINDOW),
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
@@ -847,6 +860,7 @@ export function buildRemotePairingScript(
   input?: RemoteT3RunnerOptions,
 ): string {
   return applyScriptPlaceholders(REMOTE_PAIRING_SCRIPT, {
+    T3_PRIVATE_STATE_DIR_SCRIPT: REMOTE_PRIVATE_STATE_DIR_SCRIPT,
     T3_STATE_KEY: remoteStateKey(target),
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
   });
@@ -1240,10 +1254,12 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         command: tunnelCommand,
         exitCode,
         stderr,
-        message: normalizeSshErrorMessage(
-          stderr,
-          `SSH tunnel exited unexpectedly for ${input.resolvedTarget.alias} (exit ${exitCode}).`,
-        ),
+        message:
+          describeSshHostKeyFailure(stderr, input.resolvedTarget) ??
+          normalizeSshErrorMessage(
+            stderr,
+            `SSH tunnel exited unexpectedly for ${input.resolvedTarget.alias} (exit ${exitCode}).`,
+          ),
       });
       return Effect.logWarning("ssh.tunnel.process.exited", {
         ...sshTargetLogFields(input.resolvedTarget),

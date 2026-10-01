@@ -38,6 +38,8 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
+import { isTrustedRequestOrigin } from "./utils.ts";
+import { devCredentialedOrigins } from "../httpCors.ts";
 import { layerConfig as SqlitePersistenceLayer } from "../persistence/Layers/Sqlite.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
@@ -377,6 +379,18 @@ export const serverAuthDpopFailureReason = (
 ): DpopFailureReasonType | undefined =>
   error._tag === "ServerAuthInvalidCredentialError" ? error.dpopFailureReason : undefined;
 
+export class ServerAuthCrossOriginRequestError extends Schema.TaggedError<ServerAuthCrossOriginRequestError>()(
+  "ServerAuthCrossOriginRequestError",
+  {
+    origin: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "Session cookies are only accepted from this server's own origin.";
+  }
+}
+export const isServerAuthCrossOriginRequestError = Schema.is(ServerAuthCrossOriginRequestError);
+
 export class ServerAuthInvalidScopeError extends Schema.TaggedError<ServerAuthInvalidScopeError>()(
   "ServerAuthInvalidScopeError",
   {},
@@ -492,10 +506,16 @@ export class EnvironmentAuth extends Context.Service<
     ) => Effect.Effect<number, ServerAuthInternalError>;
     readonly authenticateHttpRequest: (
       request: HttpServerRequest.HttpServerRequest,
-    ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
+    ) => Effect.Effect<
+      AuthenticatedSession,
+      ServerAuthCredentialError | ServerAuthCrossOriginRequestError | ServerAuthInternalError
+    >;
     readonly authenticateWebSocketUpgrade: (
       request: HttpServerRequest.HttpServerRequest,
-    ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
+    ) => Effect.Effect<
+      AuthenticatedSession,
+      ServerAuthCredentialError | ServerAuthCrossOriginRequestError | ServerAuthInternalError
+    >;
     readonly issueWebSocketTicket: (
       session: Pick<AuthenticatedSession, "sessionId">,
     ) => Effect.Effect<AuthWebSocketTicketResult, ServerAuthInternalError>;
@@ -607,6 +627,10 @@ export const make = Effect.gen(function* () {
   const descriptor = yield* policy.getDescriptor();
   const config = yield* ServerConfig.ServerConfig;
   const devAuth = resolveReusableDevAuth(config);
+  const trustedOriginOptions = {
+    allowedOrigins: devCredentialedOrigins(config),
+    devUrl: config.devUrl,
+  };
 
   const authenticateToken = (
     token: string,
@@ -637,7 +661,10 @@ export const make = Effect.gen(function* () {
 
   const authenticateRequest = (
     request: HttpServerRequest.HttpServerRequest,
-  ): Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError> => {
+  ): Effect.Effect<
+    AuthenticatedSession,
+    ServerAuthCredentialError | ServerAuthCrossOriginRequestError | ServerAuthInternalError
+  > => {
     const selectedCredential = selectRequestCredential(
       request,
       sessions.cookieName,
@@ -653,6 +680,16 @@ export const make = Effect.gen(function* () {
         : undefined);
     if (!credential?.token) {
       return Effect.fail(new ServerAuthMissingCredentialError({}));
+    }
+    // Cookies ride along on any same-site request; bearer, DPoP, and ws tickets
+    // are attached deliberately and need no origin check.
+    const ambientCredential = credential.source !== "bearer" && credential.source !== "dpop";
+    if (ambientCredential && !isTrustedRequestOrigin(request, trustedOriginOptions)) {
+      const origin = request.headers.origin ?? "";
+      return Effect.logWarning("Rejected session cookie from a foreign origin.").pipe(
+        Effect.annotateLogs({ origin, host: request.headers.host ?? "" }),
+        Effect.andThen(Effect.fail(new ServerAuthCrossOriginRequestError({ origin }))),
+      );
     }
     return authenticateToken(credential.token).pipe(
       Effect.flatMap((session) => {
@@ -688,6 +725,11 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  const unauthenticatedState = Effect.succeed({
+    authenticated: false,
+    auth: descriptor,
+  } satisfies AuthSessionState);
+
   const getSessionState: EnvironmentAuth["Service"]["getSessionState"] = (request) =>
     authenticateRequest(request).pipe(
       Effect.map(
@@ -700,12 +742,8 @@ export const make = Effect.gen(function* () {
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
           }) satisfies AuthSessionState,
       ),
-      Effect.catchIf(isServerAuthCredentialError, () =>
-        Effect.succeed({
-          authenticated: false,
-          auth: descriptor,
-        } satisfies AuthSessionState),
-      ),
+      Effect.catchIf(isServerAuthCredentialError, () => unauthenticatedState),
+      Effect.catchIf(isServerAuthCrossOriginRequestError, () => unauthenticatedState),
       Effect.withSpan("EnvironmentAuth.getSessionState"),
     );
 

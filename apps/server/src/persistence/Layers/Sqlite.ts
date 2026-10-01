@@ -7,6 +7,11 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { runMigrations } from "../Migrations.ts";
 import { ServerConfig } from "../../config.ts";
+import {
+  ensureOwnerOnlyFile,
+  OWNER_ONLY_FILE_MODE,
+  restrictToOwner,
+} from "../../ownerOnlyPermissions.ts";
 
 // Size the -wal file is cut back to on the first commit after a WAL reset.
 export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
@@ -31,6 +36,12 @@ export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
+  // SQLite creates -wal and -shm with the database file's mode, so a private
+  // database keeps its journal private too. Older installs are tightened here.
+  yield* ensureOwnerOnlyFile(dbPath);
+  for (const suffix of ["-wal", "-shm"]) {
+    yield* restrictToOwner(`${dbPath}${suffix}`, OWNER_ONLY_FILE_MODE);
+  }
 
   return Layer.provideMerge(
     setup,

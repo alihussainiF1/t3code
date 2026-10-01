@@ -16,6 +16,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshPasswordPrompt } from "./auth.ts";
+import { collectProcessOutput } from "./command.ts";
 import { SshCommandError } from "./errors.ts";
 import {
   buildRemoteLaunchScript,
@@ -805,4 +806,137 @@ describe("archive runner script", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
     60_000,
   );
+});
+
+describe.skipIf(HostProcessPlatform.defaultValue() === "win32")("remote launch script", () => {
+  const runProcess = (command: string, args: ReadonlyArray<string>, stdin?: string) =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make(command, args, {
+          extendEnv: true,
+          ...(stdin === undefined
+            ? {}
+            : { stdin: { stream: Stream.make(new TextEncoder().encode(stdin)), endOnDone: true } }),
+        }),
+      );
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          collectProcessOutput(child.stdout),
+          collectProcessOutput(child.stderr),
+          child.exitCode.pipe(Effect.map(Number)),
+        ],
+        { concurrency: "unbounded" },
+      );
+      return { stdout, stderr, exitCode };
+    });
+
+  const sliceBetween = (script: string, start: string, end: string) => {
+    const from = script.indexOf(start);
+    const to = script.indexOf(end, from);
+    assert.isAtLeast(from, 0, `missing ${start}`);
+    assert.isAtLeast(to, 0, `missing ${end}`);
+    return script.slice(from, to + end.length);
+  };
+
+  it.effect("keeps the launch state dir and server log private without changing the umask", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-launch-perms-" });
+      const stateDir = `${home}/.t3/ssh-launch/key`;
+      // A state dir and log left world-readable by an older launch.
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      yield* fs.chmod(`${home}/.t3/ssh-launch`, 0o755);
+      yield* fs.chmod(stateDir, 0o755);
+      yield* fs.writeFileString(`${stateDir}/server.log`, "earlier output\n");
+      yield* fs.chmod(`${stateDir}/server.log`, 0o644);
+
+      const prelude = sliceBetween(
+        buildRemoteLaunchScript(ARCHIVE),
+        'STATE_KEY="$1"',
+        'chmod 600 "$LOG_FILE"',
+      );
+      const result = yield* runProcess("sh", [
+        "-c",
+        `set -eu\numask 022\nHOME='${home}'\n${prelude}\numask`,
+        "sh",
+        "key",
+      ]);
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.equal(result.stdout.trim(), "0022");
+
+      const mode = (path: string) =>
+        fs.stat(path).pipe(Effect.map((info) => (info.mode ?? 0) & 0o777));
+      assert.equal(yield* mode(`${home}/.t3/ssh-launch`), 0o700);
+      assert.equal(yield* mode(stateDir), 0o700);
+      assert.equal(yield* mode(`${stateDir}/server.log`), 0o600);
+      assert.equal(yield* fs.readFileString(`${stateDir}/server.log`), "earlier output\n");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("creates a fresh pairing state dir private", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-pairing-perms-" });
+      const target = { alias: "devbox", hostname: "devbox", username: null, port: null } as const;
+      const prelude = sliceBetween(
+        buildRemotePairingScript(target, ARCHIVE),
+        "STATE_DIR=",
+        'chmod 700 "$HOME/.t3/ssh-launch" "$STATE_DIR"',
+      );
+      const result = yield* runProcess("sh", [
+        "-c",
+        `set -eu\numask 022\nHOME='${home}'\n${prelude}\nprintf '%s' "$STATE_DIR"`,
+      ]);
+      assert.equal(result.exitCode, 0, result.stderr);
+      const info = yield* fs.stat(result.stdout);
+      assert.equal((info.mode ?? 0) & 0o777, 0o700);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("only reports a loopback-bound default server as reusable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-runtime-reuse-" });
+      const snippet = sliceBetween(
+        buildRemoteLaunchScript(NODE_SCRIPT),
+        'const fs = require("node:fs");\nconst resolveReusableRuntimeServer',
+        "process.exit(1);\n}",
+      );
+      const runtimePath = `${root}/server-runtime.json`;
+      const probe = (runtime: Record<string, unknown>) =>
+        Effect.gen(function* () {
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - writes a fixture file.
+          yield* fs.writeFileString(runtimePath, JSON.stringify(runtime));
+          return yield* runProcess(process.execPath, ["-", runtimePath], snippet);
+        });
+      const runtime = {
+        version: 1,
+        pid: process.pid,
+        port: 3773,
+        origin: "http://127.0.0.1:3773",
+      };
+
+      const loopback = yield* probe({ ...runtime, host: "127.0.0.1" });
+      assert.equal(loopback.exitCode, 0, loopback.stderr);
+      assert.equal(loopback.stdout, `${process.pid} 3773`);
+
+      const legacy = yield* probe(runtime);
+      assert.equal(legacy.stdout, `${process.pid} 3773`);
+
+      const wildcard = yield* probe({ ...runtime, host: "0.0.0.0" });
+      assert.equal(wildcard.exitCode, 1);
+      assert.equal(wildcard.stdout, "");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it("stops reusing a recorded external server once the runtime file no longer vouches for it", () => {
+    const launch = buildRemoteLaunchScript(ARCHIVE);
+    assert.include(
+      launch,
+      'if [ -z "$REMOTE_PORT" ] || [ "$REMOTE_PORT" != "$DEFAULT_REMOTE_PORT" ] || ! wait_ready',
+    );
+    // The launched server keeps binding loopback only.
+    assert.include(launch, '"$RUNNER_FILE" serve --host 127.0.0.1');
+  });
 });

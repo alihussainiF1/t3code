@@ -62,6 +62,30 @@ describe("serverRuntimeState", () => {
     }),
   );
 
+  it.effect("records a wildcard bind host even though origin stays dialable on loopback", () =>
+    Effect.gen(function* () {
+      const wildcard = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: { host: "0.0.0.0", devUrl: undefined },
+        port: 13_773,
+      });
+      assert.equal(wildcard.host, "0.0.0.0");
+      assert.equal(wildcard.origin, "http://127.0.0.1:13773");
+
+      const ipv6Wildcard = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: { host: "::", devUrl: undefined },
+        port: 13_773,
+      });
+      assert.equal(ipv6Wildcard.host, "::");
+      assert.equal(ipv6Wildcard.origin, "http://127.0.0.1:13773");
+
+      const loopbackDefault = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: { host: undefined, devUrl: undefined },
+        port: 13_773,
+      });
+      assert.isFalse("host" in loopbackDefault);
+    }),
+  );
+
   it.effect("marks a service-supervised server so CLIs can tell it from a manual one", () =>
     Effect.gen(function* () {
       const managed = yield* ServerRuntimeState.makePersistedServerRuntimeState({

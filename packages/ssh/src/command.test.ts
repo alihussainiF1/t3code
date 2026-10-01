@@ -8,17 +8,37 @@ import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   baseSshArgs,
   getLastNonEmptyOutputLine,
   parseSshResolveOutput,
+  resolveSshTarget,
   runSshCommand,
 } from "./command.ts";
 import { SshCommandError } from "./errors.ts";
 
 const encoder = new TextEncoder();
+
+const makeSucceededProcess = (stdout: string) =>
+  ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(123),
+    stdout: Stream.make(encoder.encode(stdout)),
+    stderr: Stream.empty,
+    all: Stream.empty,
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    stdin: Sink.drain,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+
+function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
+  return command._tag === "StandardCommand" ? command.args : [];
+}
 
 const makeFailedProcess = (input: { readonly stdout: string; readonly stderr?: string }) => {
   const stdoutStream = Stream.make(encoder.encode(input.stdout));
@@ -93,10 +113,88 @@ describe("ssh command", () => {
           },
           { batchMode: "no" },
         ),
-        ["-o", "BatchMode=no", "-o", "ConnectTimeout=10", "-p", "2222"],
+        [
+          "-o",
+          "BatchMode=no",
+          "-o",
+          "ConnectTimeout=10",
+          "-o",
+          "StrictHostKeyChecking=accept-new",
+          "-p",
+          "2222",
+        ],
       );
     }),
   );
+
+  it.effect("keeps an explicit StrictHostKeyChecking from the user's ssh config", () => {
+    const spawnedArgs: Array<ReadonlyArray<string>> = [];
+    let configured = "true";
+    const spawner = ChildProcessSpawner.make((command) => {
+      spawnedArgs.push(commandArgs(command));
+      return Effect.succeed(
+        makeSucceededProcess(
+          `hostname pinned.example.com\nstricthostkeychecking ${configured}\nport 22\n`,
+        ),
+      );
+    });
+    const processLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+    const target = { alias: "pinned", hostname: "pinned.example.com", username: null, port: null };
+
+    return Effect.gen(function* () {
+      // Before resolution the app default applies.
+      assert.include(baseSshArgs(target), "StrictHostKeyChecking=accept-new");
+
+      yield* resolveSshTarget("pinned");
+      // `ssh -G` must report the user's value, not ours.
+      assert.notInclude(spawnedArgs[0]!.join(" "), "StrictHostKeyChecking");
+      assert.notInclude(baseSshArgs(target).join(" "), "StrictHostKeyChecking");
+
+      // OpenSSH's default `ask` cannot be answered from the app, so it is pinned.
+      configured = "ask";
+      yield* resolveSshTarget("pinned");
+      assert.include(baseSshArgs(target), "StrictHostKeyChecking=accept-new");
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("explains a changed host key instead of echoing ssh's warning banner", () => {
+    const stderr = [
+      "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@",
+      "@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @",
+      "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@",
+      "IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!",
+      "Host key for [devbox.example.com]:2222 has changed and you have requested strict checking.",
+      "Host key verification failed.",
+      "",
+    ].join("\n");
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(makeFailedProcess({ stdout: "", stderr })),
+    );
+    const processLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      const result = yield* Effect.result(
+        runSshCommand(
+          { alias: "devbox", hostname: "devbox.example.com", username: "julius", port: 2222 },
+          { remoteCommandArgs: ["sh", "-s"] },
+        ),
+      );
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.instanceOf(result.failure, SshCommandError);
+        assert.include(result.failure.message, "host key for devbox has changed");
+        assert.include(result.failure.message, "ssh-keygen -R [devbox.example.com]:2222");
+        assert.equal(result.failure.stderr, stderr);
+      }
+    }).pipe(Effect.provide(processLayer));
+  });
 
   it.effect("reads the last non-empty ssh output line", () =>
     Effect.sync(() => {

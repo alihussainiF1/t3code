@@ -757,6 +757,13 @@ export const GrokSettings = makeProviderSettingsSchema(
 export type GrokSettings = typeof GrokSettings.Type;
 
 /**
+ * Stands in for a secret setting kept in the server's secret store. Clients
+ * receive it when a value is set and send it back unchanged to keep that value;
+ * any other string replaces it and an empty string clears it.
+ */
+export const REDACTED_SECRET_VALUE = "\u2022\u2022\u2022\u2022\u2022\u2022";
+
+/**
  * Antigravity ACP auth methods. Personal and Enterprise open a Google sign-in
  * in the browser. The API key and Agent Platform methods take credentials from
  * the instance config and never open a browser.
@@ -795,7 +802,7 @@ export const AntigravitySettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "API key",
-        description: "Gemini or Vertex AI express key. Stored in plain text.",
+        description: "Gemini or Vertex AI express key. Kept in the server's secret store.",
         providerSettingsForm: {
           control: "password",
           placeholder: "Optional",
@@ -892,8 +899,8 @@ export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 /**
  * A read-only quota source outside this environment's provider CLIs. The
  * only kind today is a CLIProxyAPI hub, whose management API reports the
- * windows of every pooled account. The key travels in settings for now, like
- * provider environment secrets; it is redacted before reaching a client.
+ * windows of every pooled account. The key lives in the server's secret
+ * store; settings and clients only see `REDACTED_SECRET_VALUE` when one is set.
  */
 export const UsageLimitSourceConfig = Schema.Struct({
   kind: Schema.Literal("cliproxy"),

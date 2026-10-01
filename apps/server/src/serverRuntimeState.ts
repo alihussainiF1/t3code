@@ -11,6 +11,12 @@ import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 export const PersistedServerRuntimeState = Schema.Struct({
   version: Schema.Literal(1),
   pid: Schema.Int,
+  /**
+   * The host the server bound to, when one was configured; absent means the
+   * default loopback bind. `origin` is a dialable URL and reads 127.0.0.1
+   * even for a wildcard bind, so anything deciding whether this server is
+   * reachable beyond loopback (the SSH launch's reuse check) must read this.
+   */
   host: Schema.optional(Schema.String),
   port: Schema.Int,
   origin: Schema.String,

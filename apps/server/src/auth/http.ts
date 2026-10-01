@@ -14,6 +14,7 @@ import {
   EnvironmentInternalError,
   type EnvironmentInternalErrorReason,
   EnvironmentOperationForbiddenError,
+  type EnvironmentOperationForbiddenReason,
   EnvironmentRequestInvalidError,
   type EnvironmentRequestInvalidReason,
   EnvironmentResourceNotFoundError,
@@ -25,19 +26,20 @@ import {
 import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
 import { parseAllowedOAuthScope } from "@t3tools/shared/oauthScope";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Cookies from "effect/unstable/http/Cookies";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
-import { deriveAuthClientMetadata } from "./utils.ts";
+import { deriveAuthClientMetadata, readRequestRemoteAddress } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 
 const CREDENTIAL_RESPONSE_HEADERS = {
@@ -135,7 +137,7 @@ export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope
   );
 }
 
-function failEnvironmentOperationForbidden(reason: "current_session_revoke_not_allowed") {
+export function failEnvironmentOperationForbidden(reason: EnvironmentOperationForbiddenReason) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
       Effect.fail(
@@ -188,6 +190,64 @@ const appendSessionCookie = (cookieName: string, token: string, expiresAt: DateT
     ),
   );
 
+const AUTH_RATE_LIMITED_PATHS: ReadonlySet<string> = new Set([
+  "/oauth/token",
+  "/api/auth/browser-session",
+]);
+export const AUTH_RATE_LIMIT_MAX_ATTEMPTS = 30;
+const AUTH_RATE_LIMIT_WINDOW_MS = 60_000;
+const AUTH_RATE_LIMIT_MAX_TRACKED_ADDRESSES = 1_000;
+
+/**
+ * Fixed-window limit on unauthenticated credential exchanges per peer address.
+ * SSH tunnels, Tailscale serve, and the T3 Connect relay all arrive from
+ * loopback and share one window, so the limit stays well above what pairing
+ * and reconnecting clients need.
+ */
+export const authRateLimitLayer = HttpRouter.middleware(
+  Effect.sync(() => {
+    const windows = new Map<string, { startedAt: number; attempts: number }>();
+    return (httpEffect) =>
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const path = request.url.split("?", 1)[0] ?? "";
+        if (request.method !== "POST" || !AUTH_RATE_LIMITED_PATHS.has(path)) {
+          return yield* httpEffect;
+        }
+        const now = yield* Clock.currentTimeMillis;
+        if (windows.size >= AUTH_RATE_LIMIT_MAX_TRACKED_ADDRESSES) {
+          for (const [address, window] of windows) {
+            if (now - window.startedAt >= AUTH_RATE_LIMIT_WINDOW_MS) windows.delete(address);
+          }
+        }
+        const address = readRequestRemoteAddress(request) ?? "unknown";
+        const current = windows.get(address);
+        const window =
+          current && now - current.startedAt < AUTH_RATE_LIMIT_WINDOW_MS
+            ? current
+            : { startedAt: now, attempts: 0 };
+        window.attempts += 1;
+        windows.set(address, window);
+        if (window.attempts > AUTH_RATE_LIMIT_MAX_ATTEMPTS) {
+          const retryAfterSeconds = Math.ceil(
+            (window.startedAt + AUTH_RATE_LIMIT_WINDOW_MS - now) / 1000,
+          );
+          if (window.attempts === AUTH_RATE_LIMIT_MAX_ATTEMPTS + 1) {
+            yield* Effect.logWarning("Rate limited authentication attempts.").pipe(
+              Effect.annotateLogs({ address, path }),
+            );
+          }
+          return HttpServerResponse.text("Too many authentication attempts.", {
+            status: 429,
+            headers: { "retry-after": String(retryAfterSeconds) },
+          });
+        }
+        return yield* httpEffect;
+      });
+  }),
+  { global: true },
+);
+
 export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope")(function* (
   scope: AuthEnvironmentScope,
 ) {
@@ -211,6 +271,9 @@ export const environmentAuthenticatedAuthLayer = Layer.effect(
               EnvironmentAuth.serverAuthCredentialReason(error),
               EnvironmentAuth.serverAuthDpopFailureReason(error),
             ),
+          ),
+          Effect.catchIf(EnvironmentAuth.isServerAuthCrossOriginRequestError, () =>
+            failEnvironmentOperationForbidden("cross_origin_request"),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("internal_error", error),

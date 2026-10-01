@@ -23,6 +23,7 @@ import {
   type UsageLimitSourceConfig,
   ProviderDriverKind,
   ProviderInstanceId,
+  REDACTED_SECRET_VALUE,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsError,
@@ -57,6 +58,7 @@ import {
   isModelSelectionProviderEnabled,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { OWNER_ONLY_FILE_MODE, restrictToOwner } from "./ownerOnlyPermissions.ts";
 
 export { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
@@ -140,11 +142,11 @@ function providerEnvironmentSecretName(input: {
 }
 
 /**
- * On disk a hub key or Bitbucket token is replaced by this marker and the
- * real value lives in the secret store, mirroring provider environment
- * secrets. A client that sends the marker back means "keep what you have".
+ * On disk a hub key, Bitbucket token, or provider config secret is replaced by
+ * this marker and the real value lives in the secret store, mirroring provider
+ * environment secrets. A client that sends the marker back means "keep what you have".
  */
-const SECRET_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
+const SECRET_REDACTED = REDACTED_SECRET_VALUE;
 
 function usageLimitSourceSecretName(sourceId: string): string {
   return `usage-limit-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
@@ -157,6 +159,90 @@ const BITBUCKET_SECRET_NAMES = {
 const BITBUCKET_SECRET_FIELDS = ["accessToken", "apiToken"] as const;
 
 const redactSecret = (value: string) => (value.length > 0 ? SECRET_REDACTED : "");
+
+/** Fields of a driver's config that hold credentials and so live in the secret store. */
+const PROVIDER_CONFIG_SECRET_FIELDS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  antigravity: ["apiKey"],
+};
+
+const base64Url = (value: string) => Buffer.from(value, "utf8").toString("base64url");
+
+function mapConfigSecretFields(
+  config: unknown,
+  fields: ReadonlyArray<string>,
+  secretNameFor: (field: string) => string,
+  replace: (secretName: string, value: string) => string,
+): unknown {
+  if (config === null || typeof config !== "object" || Array.isArray(config)) return config;
+  const record = config as Record<string, unknown>;
+  let next: Record<string, unknown> | undefined;
+  for (const field of fields) {
+    const value = record[field];
+    if (typeof value !== "string") continue;
+    const replaced = replace(secretNameFor(field), value);
+    if (replaced === value) continue;
+    next ??= { ...record };
+    next[field] = replaced;
+  }
+  return next ?? config;
+}
+
+/**
+ * Passes every provider config secret, in legacy `providers.<driver>` blobs and in
+ * provider instance configs, through `replace` along with its secret store name.
+ * Returns the same object when nothing changed.
+ */
+function mapProviderConfigSecrets(
+  settings: ServerSettings,
+  replace: (secretName: string, value: string) => string,
+): ServerSettings {
+  let changed = false;
+  const providers: Record<string, unknown> = { ...settings.providers };
+  for (const [driver, fields] of Object.entries(PROVIDER_CONFIG_SECRET_FIELDS)) {
+    const config = providers[driver];
+    const next = mapConfigSecretFields(
+      config,
+      fields,
+      (field) => `provider-legacy-config-${base64Url(driver)}-${base64Url(field)}`,
+      replace,
+    );
+    if (next === config) continue;
+    providers[driver] = next;
+    changed = true;
+  }
+  const providerInstances: Record<string, ProviderInstanceConfig> = {
+    ...settings.providerInstances,
+  };
+  for (const [instanceId, instance] of Object.entries(settings.providerInstances)) {
+    const fields = PROVIDER_CONFIG_SECRET_FIELDS[instance.driver];
+    if (fields === undefined) continue;
+    const next = mapConfigSecretFields(
+      instance.config,
+      fields,
+      (field) => `provider-config-${base64Url(instanceId)}-${base64Url(field)}`,
+      replace,
+    );
+    if (next === instance.config) continue;
+    providerInstances[instanceId] = { ...instance, config: next };
+    changed = true;
+  }
+  return changed
+    ? {
+        ...settings,
+        providers: providers as ServerSettings["providers"],
+        providerInstances: providerInstances as ServerSettings["providerInstances"],
+      }
+    : settings;
+}
+
+function listProviderConfigSecrets(settings: ServerSettings): Map<string, string> {
+  const secrets = new Map<string, string>();
+  mapProviderConfigSecrets(settings, (secretName, value) => {
+    secrets.set(secretName, value);
+    return value;
+  });
+  return secrets;
+}
 
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
@@ -199,7 +285,10 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
     accessToken: redactSecret(settings.bitbucket.accessToken),
     apiToken: redactSecret(settings.bitbucket.apiToken),
   };
-  return { ...settings, providerInstances, usageLimitSources, bitbucket };
+  return mapProviderConfigSecrets(
+    { ...settings, providerInstances, usageLimitSources, bitbucket },
+    (_secretName, value) => redactSecret(value),
+  );
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -553,6 +642,7 @@ const make = Effect.gen(function* () {
       return yield* writeFileStringAtomically({
         filePath: settingsPath,
         contents: `${sparseSettingsJson}\n`,
+        mode: OWNER_ONLY_FILE_MODE,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, pathService),
@@ -568,33 +658,66 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  /** Stores a secret found inline in settings.json; false (logged) when the store is unavailable. */
+  const storeInlineSecret = (secretName: string, value: string) =>
+    secretStore.set(secretName, textEncoder.encode(value)).pipe(
+      Effect.as(true),
+      Effect.catch(() =>
+        Effect.logWarning("failed to move a settings secret into the secret store", {
+          secretName,
+        }).pipe(Effect.as(false)),
+      ),
+    );
+
   /**
-   * Moves Bitbucket tokens hand-edited into settings.json into the secret store as they load,
-   * so plaintext does not stay on disk. If the store is unavailable, the token keeps working
-   * from the file and the move is retried on the next load.
+   * Moves Bitbucket tokens, usage limit source keys, and provider config secrets found as
+   * plaintext in settings.json (hand-edited, or written by an older build) into the secret
+   * store as they load, so plaintext does not stay on disk. If the store is unavailable, the
+   * value keeps working from the file and the move is retried on the next load.
    */
-  const moveInlineBitbucketTokens = (settings: ServerSettings) =>
+  const moveInlineSecrets = (settings: ServerSettings) =>
     Effect.gen(function* () {
+      const isInline = (value: string) => value.length > 0 && value !== SECRET_REDACTED;
+      let next = settings;
+
       const bitbucket = { ...settings.bitbucket };
-      let moved = false;
+      let bitbucketMoved = false;
       for (const field of BITBUCKET_SECRET_FIELDS) {
         const value = bitbucket[field];
-        if (value.length === 0 || value === SECRET_REDACTED) continue;
-        const stored = yield* secretStore
-          .set(BITBUCKET_SECRET_NAMES[field], textEncoder.encode(value))
-          .pipe(
-            Effect.as(true),
-            Effect.catch(() =>
-              Effect.logWarning("failed to move a Bitbucket token into the secret store", {
-                field,
-              }).pipe(Effect.as(false)),
-            ),
-          );
-        if (!stored) continue;
+        if (!isInline(value)) continue;
+        if (!(yield* storeInlineSecret(BITBUCKET_SECRET_NAMES[field], value))) continue;
         bitbucket[field] = SECRET_REDACTED;
-        moved = true;
+        bitbucketMoved = true;
       }
-      return moved ? { ...settings, bitbucket } : settings;
+      if (bitbucketMoved) next = { ...next, bitbucket };
+
+      const usageLimitSources: Record<string, UsageLimitSourceConfig> = {
+        ...settings.usageLimitSources,
+      };
+      let usageLimitSourcesMoved = false;
+      for (const [sourceId, source] of Object.entries(settings.usageLimitSources)) {
+        if (!isInline(source.managementKey)) continue;
+        const secretName = usageLimitSourceSecretName(sourceId);
+        if (!(yield* storeInlineSecret(secretName, source.managementKey))) continue;
+        usageLimitSources[sourceId] = { ...source, managementKey: SECRET_REDACTED };
+        usageLimitSourcesMoved = true;
+      }
+      if (usageLimitSourcesMoved) {
+        next = {
+          ...next,
+          usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
+        };
+      }
+
+      const moved = new Set<string>();
+      for (const [secretName, value] of listProviderConfigSecrets(settings)) {
+        if (isInline(value) && (yield* storeInlineSecret(secretName, value))) {
+          moved.add(secretName);
+        }
+      }
+      return mapProviderConfigSecrets(next, (secretName, value) =>
+        moved.has(secretName) ? SECRET_REDACTED : value,
+      );
     });
 
   const loadSettingsFromDisk = Effect.gen(function* () {
@@ -682,7 +805,7 @@ const make = Effect.gen(function* () {
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)
       : loaded;
     // Only rewrite a file that decoded cleanly; an untrusted one stays for the user to repair.
-    const migrated = settingsFileTrusted ? yield* moveInlineBitbucketTokens(folded) : folded;
+    const migrated = settingsFileTrusted ? yield* moveInlineSecrets(folded) : folded;
     if (migrated !== loaded) {
       yield* writeSettingsAtomically(migrated);
     }
@@ -765,12 +888,30 @@ const make = Effect.gen(function* () {
           );
         bitbucket[field] = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
       }
-      return {
-        ...settings,
-        providerInstances: providerInstances as ServerSettings["providerInstances"],
-        usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
-        bitbucket,
-      };
+      const providerConfigSecrets = new Map<string, string>();
+      for (const [secretName, value] of listProviderConfigSecrets(settings)) {
+        if (value !== SECRET_REDACTED) continue;
+        const secret = yield* secretStore
+          .get(secretName)
+          .pipe(
+            Effect.mapError(
+              (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+            ),
+          );
+        providerConfigSecrets.set(
+          secretName,
+          Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+        );
+      }
+      return mapProviderConfigSecrets(
+        {
+          ...settings,
+          providerInstances: providerInstances as ServerSettings["providerInstances"],
+          usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
+          bitbucket,
+        },
+        (secretName, value) => providerConfigSecrets.get(secretName) ?? value,
+      );
     });
 
   const materializeChanges = (changes: Stream.Stream<ServerSettings>) =>
@@ -930,15 +1071,42 @@ const make = Effect.gen(function* () {
         bitbucket[field] = SECRET_REDACTED;
       }
 
-      return {
-        settings: {
+      const currentConfigSecrets = listProviderConfigSecrets(current);
+      const nextConfigSecretNames = new Set<string>();
+      const settings = mapProviderConfigSecrets(
+        {
           ...next,
           providerInstances: providerInstances as ServerSettings["providerInstances"],
           usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
           bitbucket,
         },
-        changes,
-      };
+        (secretName, nextValue) => {
+          nextConfigSecretNames.add(secretName);
+          let value = nextValue;
+          if (value === SECRET_REDACTED) {
+            // Same as Bitbucket: the marker keeps what is saved, and moves a plaintext value
+            // still inline in settings.json into the store.
+            const inline = currentConfigSecrets.get(secretName);
+            if (inline === undefined || inline === SECRET_REDACTED || inline.length === 0) {
+              return SECRET_REDACTED;
+            }
+            value = inline;
+          }
+          if (value.length === 0) {
+            changes.push({ kind: "remove", secretName, operation: "remove-secret" });
+            return value;
+          }
+          changes.push({ kind: "write", secretName, value: textEncoder.encode(value) });
+          return SECRET_REDACTED;
+        },
+      );
+      // A cleared field drops out of the config, and a deleted instance takes its fields along.
+      for (const secretName of currentConfigSecrets.keys()) {
+        if (nextConfigSecretNames.has(secretName)) continue;
+        changes.push({ kind: "remove", secretName, operation: "remove-stale-secret" });
+      }
+
+      return { settings, changes };
     });
 
   const rollbackProviderEnvironmentSecretWrites = (
@@ -1106,6 +1274,10 @@ const make = Effect.gen(function* () {
     }
 
     const startup = Effect.gen(function* () {
+      // Older builds wrote settings.json with the umask default.
+      yield* restrictToOwner(settingsPath, OWNER_ONLY_FILE_MODE).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+      );
       yield* startWatcher;
       yield* Cache.invalidate(settingsCache, cacheKey);
       yield* getSettingsFromCache;

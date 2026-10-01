@@ -35,6 +35,11 @@ export interface SshCommandResult {
 }
 
 export interface RunSshCommandOptions extends SshAuthOptions {
+  /**
+   * Leave `StrictHostKeyChecking` to the user's ssh config. Only `ssh -G`
+   * needs this, so it reports the configured value rather than ours.
+   */
+  readonly configHostKeyChecking?: boolean;
   readonly preHostArgs?: ReadonlyArray<string>;
   readonly remoteCommandArgs?: ReadonlyArray<string>;
   readonly stdin?: string;
@@ -98,17 +103,70 @@ export const buildSshHostSpecEffect = (
       }),
   });
 
+/**
+ * `StrictHostKeyChecking` per alias as the user's ssh config resolves it,
+ * recorded by `resolveSshTarget` from `ssh -G` (which runs before every
+ * desktop connect). Command-line `-o` beats ssh config, so this is how an
+ * explicit user setting survives our default.
+ */
+const configuredHostKeyChecking = new Map<string, string>();
+
+export function parseSshStrictHostKeyChecking(stdout: string): string | null {
+  const match = /^stricthostkeychecking\s+(\S+)\s*$/imu.exec(stdout);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+/**
+ * The app cannot answer ssh's interactive "continue connecting?" prompt, so
+ * OpenSSH's default (`ask`) is replaced with `accept-new`: trust a host's key
+ * the first time, refuse a key that changed. Any other configured value
+ * (`yes`, `no`, `accept-new`) is the user's explicit choice and is kept.
+ */
+export function hostKeyCheckingArgs(configured: string | null | undefined): string[] {
+  return configured === null || configured === undefined || configured === "ask"
+    ? ["-o", "StrictHostKeyChecking=accept-new"]
+    : [];
+}
+
 export function baseSshArgs(
   target: DesktopSshEnvironmentTarget,
-  input?: { readonly batchMode?: "yes" | "no" },
+  input?: {
+    readonly batchMode?: "yes" | "no";
+    readonly configHostKeyChecking?: boolean;
+  },
 ): string[] {
   return [
     "-o",
     `BatchMode=${input?.batchMode ?? "no"}`,
     "-o",
     "ConnectTimeout=10",
+    ...(input?.configHostKeyChecking
+      ? []
+      : hostKeyCheckingArgs(configuredHostKeyChecking.get(target.alias.trim()))),
     ...(target.port !== null ? ["-p", String(target.port)] : []),
   ];
+}
+
+/**
+ * Turns ssh's host-key refusals into an actionable message. A changed key
+ * prints a wall of `@` warnings that otherwise reaches the UI verbatim.
+ */
+export function describeSshHostKeyFailure(
+  stderr: string,
+  target: Pick<DesktopSshEnvironmentTarget, "alias" | "hostname" | "port">,
+): string | null {
+  const destination = target.alias.trim() || target.hostname.trim();
+  const knownHostsEntry =
+    target.port !== null && target.port !== 22
+      ? `[${target.hostname}]:${target.port}`
+      : target.hostname;
+  if (/REMOTE HOST IDENTIFICATION HAS CHANGED/iu.test(stderr)) {
+    return `The SSH host key for ${destination} has changed since it was first trusted, so T3 Code refused to connect. This happens when the server is reinstalled, but can also mean the connection is being intercepted. If you expect the change, remove the old key with \`ssh-keygen -R ${knownHostsEntry}\` and reconnect.`;
+  }
+  if (/Host key verification failed/iu.test(stderr)) {
+    return `SSH host key verification failed for ${destination}. Connect once from a terminal with \`ssh ${destination}\` to review and trust its host key, then retry.`;
+  }
+  return null;
 }
 
 export function getLastNonEmptyOutputLine(stdout: string): string | null {
@@ -143,10 +201,15 @@ function redactSshErrorOutput(output: string): string {
 }
 
 function normalizeSshErrorMessage(input: {
+  readonly target: DesktopSshEnvironmentTarget;
   readonly stdout?: string;
   readonly stderr: string;
   readonly fallbackMessage: string;
 }): string {
+  const hostKeyFailure = describeSshHostKeyFailure(input.stderr, input.target);
+  if (hostKeyFailure !== null) {
+    return hostKeyFailure;
+  }
   const cleanedStderr = input.stderr.trim();
   if (cleanedStderr.length > 0) {
     return cleanedStderr;
@@ -197,6 +260,7 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
   const args = [
     ...baseSshArgs(target, {
       batchMode: input.batchMode ?? (input.interactiveAuth ? "no" : "yes"),
+      ...(input.configHostKeyChecking ? { configHostKeyChecking: true } : {}),
     }),
     ...(input.preHostArgs ?? []),
     hostSpec,
@@ -274,6 +338,7 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
       stdout: diagnosticStdout,
       stderr,
       message: normalizeSshErrorMessage({
+        target,
         stdout: diagnosticStdout,
         stderr,
         fallbackMessage: `SSH command failed for ${hostSpec} (exit ${exitCode}).`,
@@ -344,9 +409,17 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
       username: null,
       port: null,
     },
-    { preHostArgs: ["-G"] },
+    { preHostArgs: ["-G"], configHostKeyChecking: true },
   ).pipe(
-    Effect.map((result) => parseSshResolveOutput(trimmedAlias, result.stdout)),
+    Effect.map((result) => {
+      const configured = parseSshStrictHostKeyChecking(result.stdout);
+      if (configured === null) {
+        configuredHostKeyChecking.delete(trimmedAlias);
+      } else {
+        configuredHostKeyChecking.set(trimmedAlias, configured);
+      }
+      return parseSshResolveOutput(trimmedAlias, result.stdout);
+    }),
     Effect.tap((target) =>
       Effect.logDebug("ssh.target.resolve.succeeded", sshTargetLogFields(target)),
     ),

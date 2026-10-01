@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -86,6 +87,30 @@ it.effect("shrinks the WAL file back to the size limit after a large write", () 
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
   );
 });
+
+it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  "keeps the database and its WAL files private to the owner",
+  () => {
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-mode-"));
+    const dbPath = NodePath.join(tempDir, "state.sqlite");
+    // An older install left a world-readable WAL behind.
+    NodeFS.writeFileSync(`${dbPath}-wal`, "", { mode: 0o644 });
+    NodeFS.chmodSync(`${dbPath}-wal`, 0o644);
+    const modeOf = (path: string) => NodeFS.statSync(path).mode & 0o777;
+
+    return Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE mode_probe(id INTEGER PRIMARY KEY)`;
+      yield* sql`INSERT INTO mode_probe(id) VALUES (${1})`;
+      assert.equal(modeOf(dbPath), 0o600);
+      assert.equal(modeOf(`${dbPath}-wal`), 0o600);
+      assert.equal(modeOf(`${dbPath}-shm`), 0o600);
+    }).pipe(
+      Effect.provide(makeSqlitePersistenceLive(dbPath).pipe(Layer.provide(NodeServices.layer))),
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+    );
+  },
+);
 
 it.effect("applies busy_timeout in the shared persistence setup", () =>
   Effect.gen(function* () {

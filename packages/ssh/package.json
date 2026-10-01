@@ -19,6 +19,10 @@
       "types": "./src/errors.ts",
       "import": "./src/errors.ts"
     },
+    "./runtimeReuse": {
+      "types": "./src/runtimeReuse.ts",
+      "import": "./src/runtimeReuse.ts"
+    },
     "./tunnel": {
       "types": "./src/tunnel.ts",
       "import": "./src/tunnel.ts"

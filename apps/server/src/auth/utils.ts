@@ -178,6 +178,73 @@ function readRemoteAddressFromSource(source: unknown): string | undefined {
   return normalizeIpAddress(candidate.socket?.remoteAddress ?? candidate.remoteAddress);
 }
 
+/** The socket peer address. Forwarded-for headers are not trusted anywhere in the server. */
+export function readRequestRemoteAddress(
+  request: HttpServerRequest.HttpServerRequest,
+): string | undefined {
+  return readRemoteAddressFromSource(request.source);
+}
+
+function normalizeAuthority(authority: string | undefined, protocol: string): string | undefined {
+  const value = authority?.split(",")[0]?.trim();
+  if (!value) {
+    return undefined;
+  }
+  try {
+    return new URL(`${protocol}//${value}`).host;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether a browser request may use this server's ambient session cookie.
+ *
+ * Cookies are scoped by host, not port, so a page on another local port (an
+ * agent's dev server, say) is same-site and its WebSocket upgrades carry our
+ * cookie. Requests without `Origin` come from non-browser clients. Otherwise
+ * the Origin's host:port must be the authority the browser addressed: `Host`,
+ * or `X-Forwarded-Host` from proxies that rewrite `Host` (Tailscale serve,
+ * Vite). A page cannot forge `X-Forwarded-Host` on a cookie-bearing request:
+ * WebSocket cannot set headers and a custom header forces a CORS preflight,
+ * which never grants credentials to an unlisted origin.
+ *
+ * In dev, the credentialed CORS origins are accepted, as is any origin on the
+ * Vite port (LAN and loopback aliases reach the server through Vite's proxy,
+ * which rewrites `Host`).
+ */
+export function isTrustedRequestOrigin(
+  request: HttpServerRequest.HttpServerRequest,
+  options: {
+    readonly allowedOrigins: ReadonlyArray<string>;
+    readonly devUrl: URL | undefined;
+  },
+): boolean {
+  const origin = request.headers.origin;
+  if (origin === undefined) {
+    return true;
+  }
+  if (options.allowedOrigins.includes(origin)) {
+    return true;
+  }
+  let originUrl: URL;
+  try {
+    originUrl = new URL(origin);
+  } catch {
+    // Includes the opaque `null` origin of sandboxed documents.
+    return false;
+  }
+  if (originUrl.protocol !== "http:" && originUrl.protocol !== "https:") {
+    return false;
+  }
+  if (options.devUrl?.port && originUrl.port === options.devUrl.port) {
+    return true;
+  }
+  return [request.headers.host, request.headers["x-forwarded-host"]].some(
+    (authority) => normalizeAuthority(authority, originUrl.protocol) === originUrl.host,
+  );
+}
+
 export function deriveAuthClientMetadata(input: {
   readonly request: HttpServerRequest.HttpServerRequest;
   readonly presented?: AuthClientPresentationMetadata;

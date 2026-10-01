@@ -5792,9 +5792,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
+      // A cross-origin renderer authenticates with a bearer token; session
+      // cookies are refused from foreign origins.
       const response = yield* HttpClient.post("/api/observability/v1/traces", {
         headers: {
-          cookie: yield* getAuthenticatedSessionCookieHeader(),
+          authorization: `Bearer ${yield* getAuthenticatedBearerSessionToken()}`,
           "content-type": "application/json",
           origin: "http://localhost:5733",
         },

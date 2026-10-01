@@ -32,6 +32,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import {
   failEnvironmentAuthInvalid,
   failEnvironmentInternal,
+  failEnvironmentOperationForbidden,
   failEnvironmentScopeRequired,
 } from "../auth/http.ts";
 import * as DeviceService from "./DeviceService.ts";
@@ -99,6 +100,9 @@ const authenticate = (requiredScope: AuthEnvironmentScope) =>
               EnvironmentAuth.serverAuthCredentialReason(error),
               EnvironmentAuth.serverAuthDpopFailureReason(error),
             );
+          }
+          if (EnvironmentAuth.isServerAuthCrossOriginRequestError(error)) {
+            return yield* failEnvironmentOperationForbidden("cross_origin_request");
           }
           return yield* failEnvironmentInternal("internal_error", error);
         }),

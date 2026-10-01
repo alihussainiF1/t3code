@@ -78,6 +78,8 @@ export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.T
 
 export const EnvironmentOperationForbiddenReason = Schema.Literals([
   "current_session_revoke_not_allowed",
+  // A session cookie arrived on a request whose Origin is not this server.
+  "cross_origin_request",
 ]);
 export type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
 
@@ -224,6 +226,7 @@ export type EnvironmentHttpCommonError = typeof EnvironmentHttpCommonError.Type;
 
 const EnvironmentAuthenticationErrors = [
   EnvironmentAuthInvalidError,
+  EnvironmentOperationForbiddenError,
   EnvironmentInternalError,
 ] as const;
 

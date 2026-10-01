@@ -178,7 +178,11 @@ import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
-import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
+import {
+  failEnvironmentAuthInvalid,
+  failEnvironmentInternal,
+  failEnvironmentOperationForbidden,
+} from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -4066,6 +4070,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               EnvironmentAuth.serverAuthDpopFailureReason(error),
             ),
           ),
+          Effect.catchIf(EnvironmentAuth.isServerAuthCrossOriginRequestError, () =>
+            failEnvironmentOperationForbidden("cross_origin_request"),
+          ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("internal_error", error),
           ),
@@ -4131,6 +4138,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         Effect.catchTags({
           EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
           EnvironmentInternalError: HttpServerRespondable.toResponse,
+          EnvironmentOperationForbiddenError: HttpServerRespondable.toResponse,
         }),
       ),
     );
