@@ -2432,6 +2432,59 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("starts a turn sent during a rollback only once the cut is made", () =>
+    Effect.gen(function* () {
+      const prompted = `msg_t3_turn_${SESSION}:attempt:earlier`;
+      // The replay is strictly ordered: a prompt sent while the rollback still
+      // reads or cuts the history fails it.
+      const { runtime, thread } = yield* resumed([
+        out("message.list", "<any>"),
+        reply("message.list", {
+          data: [{ id: prompted, time: { created: 1 }, text: "earlier", type: "user" }],
+          cursor: {},
+        }),
+        out("session.revert.stage", { sessionID: SESSION, messageID: prompted, files: false }),
+        replyData("session.revert.stage", { messageID: prompted, files: [] }),
+        out("session.revert.commit", { sessionID: SESSION }),
+        reply("session.revert.commit", null),
+        out("message.list", "<any>"),
+        reply("message.list", { data: [], cursor: {} }),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const now = yield* DateTime.now;
+      const earlier = {
+        id: ProviderTurnId.make("provider-turn:earlier"),
+        providerThreadId: thread.id,
+        nodeId: NodeId.make("node:earlier"),
+        runAttemptId: RunAttemptId.make("attempt:earlier"),
+        nativeTurnRef: { driver: OPENCODE_PROVIDER, nativeId: prompted, strength: "weak" as const },
+        ordinal: 1,
+        status: "completed" as const,
+        startedAt: now,
+        completedAt: now,
+      };
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const rollback = yield* runtime
+        .rollbackThread({
+          providerThread: thread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint:start"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [earlier],
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* runtime.startTurn({ ...turnInput(thread), providerTurnOrdinal: 1 });
+      yield* Fiber.join(rollback);
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("moves a fork into its target thread's worktree before the first prompt", () =>
     Effect.gen(function* () {
       const FORK = "ses_f1484db83ffeLGtrRCFimo1H0e";
