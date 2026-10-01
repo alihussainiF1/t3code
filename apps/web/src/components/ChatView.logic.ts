@@ -4,7 +4,6 @@ import {
   type AssetCreateUrlResult,
   type ChatFileAttachment,
   type EnvironmentId,
-  isProviderDriverKind,
   ProjectId,
   type MessageId,
   type ModelSelection,
@@ -538,59 +537,97 @@ export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "sessi
   };
 }
 
-/** Use the same enabled instance for the composer, provider status, and chat actions. */
+/**
+ * Use the same enabled instance for the composer, provider status, and chat actions.
+ *
+ * Started threads are not pinned to their provider: picking another instance
+ * hands the conversation off to it (see `resolveProviderHandoffHint`).
+ */
 export function resolveComposerProviderSelection(input: {
   entries: ReadonlyArray<ProviderInstanceEntry>;
   candidateInstanceIds: ReadonlyArray<ProviderInstanceId | null | undefined>;
-  lockedProvider: ProviderDriverKind | null;
-  lockedInstanceId: ProviderInstanceId | null | undefined;
 }) {
   const requestedInstanceId = input.candidateInstanceIds.find(
     (candidate) => candidate != null && candidate !== NO_PROVIDER_MODEL_SELECTION.instanceId,
   );
   const requestedDriverKind =
-    input.lockedProvider ??
     input.entries.find((entry) => entry.instanceId === requestedInstanceId)?.driverKind ??
     input.entries[0]?.driverKind ??
     ProviderDriverKind.make("unconfigured");
-  const lockedContinuationGroupKey = input.lockedProvider
-    ? (input.entries.find((entry) => entry.instanceId === input.lockedInstanceId)
-        ?.continuationGroupKey ?? null)
-    : null;
-  // Missing metadata must not move Antigravity history into another Google profile.
-  const requiresExactInstance =
-    input.lockedProvider === "antigravity" &&
-    input.lockedInstanceId != null &&
-    lockedContinuationGroupKey === null;
-  const compatibleEntries = input.entries.filter(
-    (entry) =>
-      (!input.lockedProvider || entry.driverKind === input.lockedProvider) &&
-      (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey) &&
-      (!requiresExactInstance || entry.instanceId === input.lockedInstanceId),
-  );
   const selectedProviderEntry =
     input.candidateInstanceIds
       .map((candidate) =>
-        compatibleEntries.find(
+        input.entries.find(
           (entry) => entry.instanceId === candidate && entry.enabled && entry.isAvailable,
         ),
       )
       .find((entry) => entry !== undefined) ??
     resolveSelectableProviderInstanceEntry(
-      compatibleEntries.filter((entry) => entry.driverKind === requestedDriverKind),
+      input.entries.filter((entry) => entry.driverKind === requestedDriverKind),
       undefined,
     ) ??
-    resolveSelectableProviderInstanceEntry(compatibleEntries, undefined);
-  const unavailableProviderInstanceId = selectedProviderEntry
-    ? undefined
-    : input.lockedProvider
-      ? (input.lockedInstanceId ?? requestedInstanceId)
-      : requestedInstanceId;
+    resolveSelectableProviderInstanceEntry(input.entries, undefined);
   return {
     selectedProviderEntry,
     requestedDriverKind,
-    lockedContinuationGroupKey,
-    unavailableProviderInstanceId,
+    unavailableProviderInstanceId: selectedProviderEntry ? undefined : requestedInstanceId,
+  };
+}
+
+/**
+ * Whether sending with `nextInstanceId` would hand a started conversation off
+ * to a fresh provider session instead of resuming it natively. Resuming needs
+ * the same driver and the same known continuation group.
+ */
+export function isProviderHandoff(input: {
+  entries: ReadonlyArray<
+    Pick<ProviderInstanceEntry, "instanceId" | "driverKind" | "continuationGroupKey">
+  >;
+  currentInstanceId: ProviderInstanceId;
+  nextInstanceId: ProviderInstanceId;
+}): boolean {
+  if (input.currentInstanceId === input.nextInstanceId) {
+    return false;
+  }
+  const current = input.entries.find((entry) => entry.instanceId === input.currentInstanceId);
+  const next = input.entries.find((entry) => entry.instanceId === input.nextInstanceId);
+  return (
+    !current ||
+    !next ||
+    current.driverKind !== next.driverKind ||
+    !current.continuationGroupKey ||
+    current.continuationGroupKey !== next.continuationGroupKey
+  );
+}
+
+/** Names the providers for the composer hint shown before a handoff send. */
+export function resolveProviderHandoffHint(input: {
+  threadStarted: boolean;
+  sessionProviderInstanceId: ProviderInstanceId | null | undefined;
+  selectedInstanceId: ProviderInstanceId | null | undefined;
+  entries: ReadonlyArray<ProviderInstanceEntry>;
+}): { fromLabel: string; toLabel: string } | null {
+  const { sessionProviderInstanceId, selectedInstanceId } = input;
+  if (
+    !input.threadStarted ||
+    !sessionProviderInstanceId ||
+    !selectedInstanceId ||
+    !isProviderHandoff({
+      entries: input.entries,
+      currentInstanceId: sessionProviderInstanceId,
+      nextInstanceId: selectedInstanceId,
+    })
+  ) {
+    return null;
+  }
+  const toEntry = input.entries.find((entry) => entry.instanceId === selectedInstanceId);
+  if (!toEntry) {
+    return null;
+  }
+  const fromEntry = input.entries.find((entry) => entry.instanceId === sessionProviderInstanceId);
+  return {
+    fromLabel: fromEntry?.displayName ?? sessionProviderInstanceId,
+    toLabel: toEntry.displayName,
   };
 }
 
@@ -1009,38 +1046,18 @@ export function threadShellHasStarted(
   );
 }
 
-// Imported history has no session until its first prompt. Resolve its instance
-// through the environment's provider catalog before locking to a driver.
-export function deriveLockedProvider(input: {
-  thread: Thread | null | undefined;
-  selectedProvider: string | null;
-  threadProvider: string | null;
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver">>;
-}): ProviderDriverKind | null {
-  if (!threadHasStarted(input.thread)) {
-    return null;
-  }
-  const sessionProvider = input.thread?.session?.providerName ?? null;
-  if (sessionProvider && isProviderDriverKind(sessionProvider)) {
-    return sessionProvider;
-  }
-  // Preserve the existing lock while an instance is missing from the catalog;
-  // a started thread must not silently fall back to a different driver.
-  const threadProvider =
-    input.providers.find((provider) => provider.instanceId === input.threadProvider)?.driver ??
-    input.threadProvider;
-  const selectedProvider =
-    input.providers.find((provider) => provider.instanceId === input.selectedProvider)?.driver ??
-    input.selectedProvider;
-  const narrowedThreadProvider =
-    threadProvider && isProviderDriverKind(threadProvider) ? threadProvider : null;
-  const narrowedSelectedProvider =
-    selectedProvider && isProviderDriverKind(selectedProvider) ? selectedProvider : null;
-  return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
-}
-
+/**
+ * Providers flagged `requiresNewThreadForModelChange` cannot switch models
+ * within a resumed session. Handoffs start a fresh session, so they are never
+ * blocked.
+ */
 export function getStartedThreadModelChangeBlockReason(input: {
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "requiresNewThreadForModelChange">>;
+  providers: ReadonlyArray<
+    Pick<
+      ServerProvider,
+      "instanceId" | "driver" | "continuation" | "requiresNewThreadForModelChange"
+    >
+  >;
   hasStartedSession: boolean;
   currentModelSelection: ModelSelection;
   currentProviderInstanceId?: ModelSelection["instanceId"] | null | undefined;
@@ -1056,6 +1073,19 @@ export function getStartedThreadModelChangeBlockReason(input: {
   if (
     currentModelSelection.instanceId === input.nextModelSelection.instanceId &&
     currentModelSelection.model === input.nextModelSelection.model
+  ) {
+    return null;
+  }
+  if (
+    isProviderHandoff({
+      entries: input.providers.map((provider) => ({
+        instanceId: provider.instanceId,
+        driverKind: provider.driver,
+        continuationGroupKey: provider.continuation?.groupKey,
+      })),
+      currentInstanceId: currentModelSelection.instanceId,
+      nextInstanceId: input.nextModelSelection.instanceId,
+    })
   ) {
     return null;
   }

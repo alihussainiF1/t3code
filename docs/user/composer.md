@@ -70,6 +70,18 @@ returns to the remembered selection.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 
+## Switch provider in a thread
+
+You can pick any provider from the model picker, even after a thread has started. Switching
+within the same provider account continues the native session. Switching to a different provider
+or account starts a new session there, and your next message carries a summary of the
+conversation so far: recent turns in full and a condensed version of older ones. The composer
+shows a note before you send, and the thread marks where the switch happened.
+
+Pending approvals and questions from the previous provider close when you switch. Rewinding to a
+point before the switch restores files, and the new provider receives the conversation again with
+your next message.
+
 ## Quote an assistant response
 
 On web and desktop, select text within one assistant response and choose

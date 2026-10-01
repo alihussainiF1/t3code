@@ -108,6 +108,7 @@ import remarkGfm from "remark-gfm";
 import type { Root, RootContent } from "mdast";
 import { T3Wordmark } from "../T3Wordmark";
 import {
+  ArrowLeftRightIcon,
   BotIcon,
   BrainIcon,
   CheckIcon,
@@ -1732,7 +1733,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "activity-group" ? <ActivityGroupTimelineRow row={row} /> : null}
       {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
-      {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
+      {row.kind === "divider" ? <DividerTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
@@ -1878,11 +1879,8 @@ function QueuedMessageTimelineRow({
   );
 }
 
-function ContextCompactionTimelineRow({
-  row,
-}: {
-  row: Extract<TimelineRow, { kind: "context-compaction" }>;
-}) {
+function DividerTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "divider" }> }) {
+  const Icon = row.activityKind === "provider.handoff" ? ArrowLeftRightIcon : Minimize2Icon;
   return (
     <div
       role="separator"
@@ -1891,7 +1889,7 @@ function ContextCompactionTimelineRow({
     >
       <span className="h-px flex-1 bg-border/70" />
       <span className="flex shrink-0 items-center gap-1.5">
-        <Minimize2Icon aria-hidden="true" className="size-3" />
+        <Icon aria-hidden="true" className="size-3" />
         {row.label}
       </span>
       <span className="h-px flex-1 bg-border/70" />

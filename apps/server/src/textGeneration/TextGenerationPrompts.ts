@@ -327,3 +327,35 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// Thread summary (provider handoff)
+// ---------------------------------------------------------------------------
+
+export interface ThreadSummaryPromptInput {
+  transcript: string;
+}
+
+/** Summarize earlier turns so a different coding agent can continue the thread. */
+export function buildThreadSummaryPrompt(input: ThreadSummaryPromptInput) {
+  const prompt = [
+    "You summarize the earlier part of a conversation between a user and a coding agent.",
+    "Another coding agent will continue the work using only your summary and the most recent turns.",
+    "Return a JSON object with key: summary.",
+    "Rules:",
+    "- summary is plain text, at most about 400 words",
+    "- keep the user's goals, decisions, constraints, and preferences",
+    "- keep concrete facts: file paths, commands, errors, and what was changed or left unfinished",
+    "- do not invent details and do not address the reader",
+    "",
+    "Conversation:",
+    // Keep the end: the latest turns matter most to whoever continues the thread.
+    input.transcript.length > 60_000
+      ? `${EARLIER_CONTENT_TRUNCATION_MARKER}${input.transcript.slice(-60_000)}`
+      : input.transcript,
+  ].join("\n");
+  const outputSchema = Schema.Struct({
+    summary: Schema.String,
+  });
+  return { prompt, outputSchema };
+}

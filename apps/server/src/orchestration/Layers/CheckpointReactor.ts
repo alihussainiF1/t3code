@@ -35,6 +35,7 @@ import { forkParked } from "../../serverActivation.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
+import { PROVIDER_HANDOFF_ACTIVITY_KIND, readProviderHandoffPayload } from "../threadHandoff.ts";
 import type { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import type { OrchestrationDispatchError } from "../Errors.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
@@ -805,7 +806,24 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* providerService.assertConversationRollbackSupported(event.payload.threadId);
+    // Turns before a provider handoff never ran as native turns of the current
+    // provider, so only turns after the switch can roll back there. Files still
+    // restore to any checkpoint.
+    const handoffActivity = yield* projectionSnapshotQuery.getLatestThreadActivityByKind({
+      threadId: event.payload.threadId,
+      kind: PROVIDER_HANDOFF_ACTIVITY_KIND,
+    });
+    const handoff = Option.isSome(handoffActivity)
+      ? readProviderHandoffPayload(handoffActivity.value)
+      : null;
+    const providerRollbackTurns = Math.max(
+      0,
+      currentTurnCount - Math.max(event.payload.turnCount, handoff?.checkpointTurnCount ?? 0),
+    );
+
+    if (handoff === null || providerRollbackTurns > 0) {
+      yield* providerService.assertConversationRollbackSupported(event.payload.threadId);
+    }
 
     if (event.payload.restoreFiles !== false) {
       if (!checkpointCwd) {
@@ -866,11 +884,10 @@ const make = Effect.gen(function* () {
       yield* refreshWorkspaceEntries(checkpointCwd);
     }
 
-    const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
-    if (rolledBackTurns > 0) {
+    if (providerRollbackTurns > 0) {
       yield* providerService.rollbackConversation({
         threadId: event.payload.threadId,
-        numTurns: rolledBackTurns,
+        numTurns: providerRollbackTurns,
       });
     }
 

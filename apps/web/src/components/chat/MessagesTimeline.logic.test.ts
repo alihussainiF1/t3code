@@ -1354,12 +1354,56 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(rows).toEqual([
       {
-        kind: "context-compaction",
+        kind: "divider",
         id: "compaction-entry",
         createdAt: "2026-01-01T00:00:00Z",
+        activityKind: "context-compaction",
         label: "Compacted context 899K → 19K tokens",
       },
     ]);
+  });
+
+  it("renders a provider handoff as a divider between turns", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "tool-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:00Z",
+          entry: {
+            id: "tool",
+            createdAt: "2026-01-01T00:00:00Z",
+            label: "Ran tests",
+            tone: "tool",
+          },
+        },
+        {
+          id: "handoff-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:01Z",
+          entry: {
+            id: "handoff",
+            createdAt: "2026-01-01T00:00:01Z",
+            label: "Switched from Codex to Claude",
+            tone: "info",
+            sourceActivityKind: "provider.handoff",
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["work", "divider"]);
+    expect(rows[1]).toEqual({
+      kind: "divider",
+      id: "handoff-entry",
+      createdAt: "2026-01-01T00:00:01Z",
+      activityKind: "provider.handoff",
+      label: "Switched from Codex to Claude",
+    });
   });
 
   it("keeps subagent spawn rows outside turn folds even after they settle", () => {

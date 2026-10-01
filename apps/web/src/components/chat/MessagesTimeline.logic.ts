@@ -5,6 +5,7 @@ import { shallow } from "zustand/vanilla/shallow";
 import { renderCodexDirectivesForCopy } from "@t3tools/client-runtime/codex-markdown-directives";
 import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
 import {
+  isTimelineDividerActivityKind,
   liveActivityToolStatus,
   normalizeCompactToolLabel,
   omitSupersededLifecycleMarkers,
@@ -12,6 +13,7 @@ import {
   summarizeToolGroup,
   toolGroupAction,
   toolGroupSummaryKind,
+  type TimelineDividerActivityKind,
   type ToolGroupSummaryKind,
 } from "@t3tools/client-runtime/work-log/presentation";
 export {
@@ -343,7 +345,7 @@ function isActivityEntry(entry: TimelineEntry): entry is ActivityEntry {
     : entry.kind === "work" &&
         entry.entry.agentSpawn === undefined &&
         entry.entry.questionAnswer === undefined &&
-        entry.entry.sourceActivityKind !== "context-compaction" &&
+        !isTimelineDividerActivityKind(entry.entry.sourceActivityKind) &&
         entry.entry.tone !== "error";
 }
 
@@ -400,9 +402,10 @@ export type MessagesTimelineRow =
       expanded: boolean;
     }
   | {
-      kind: "context-compaction";
+      kind: "divider";
       id: string;
       createdAt: string;
+      activityKind: TimelineDividerActivityKind;
       label: string;
     }
   | {
@@ -738,8 +741,8 @@ function deriveTurnFolds(input: {
       if (entry.id === group.terminalEntry?.id) {
         continue;
       }
-      const isCompaction =
-        entry.kind === "work" && entry.entry.sourceActivityKind === "context-compaction";
+      const isDivider =
+        entry.kind === "work" && isTimelineDividerActivityKind(entry.entry.sourceActivityKind);
       const isSingleTrailingActivity =
         trailingEntryCount === 1 &&
         entry.kind === "work" &&
@@ -747,12 +750,7 @@ function deriveTurnFolds(input: {
       // A thinking block after the answer folds with its turn rather than
       // trailing under it, which is what mobile already does.
       const isReasoning = entry.kind === "message" && entry.message.role === "reasoning";
-      if (
-        !isCompaction &&
-        !isReasoning &&
-        index > terminalEntryIndex &&
-        !isSingleTrailingActivity
-      ) {
+      if (!isDivider && !isReasoning && index > terminalEntryIndex && !isSingleTrailingActivity) {
         continue;
       }
       // User input and subagent batches stay visible after their turn settles.
@@ -767,14 +765,14 @@ function deriveTurnFolds(input: {
     if (hiddenEntryIds.size === 0) {
       continue;
     }
-    // A lone compaction row stays visible on its own; it only folds away as
+    // A lone divider row stays visible on its own; it only folds away as
     // part of a turn that already folds other work. Thinking is the same: a
     // question answered by thought alone keeps its "Thought" row
     // rather than collapsing behind a "Worked for ..." that hides nothing else.
     const hidesFoldableWork = group.entries.some(
       (entry) =>
         hiddenEntryIds.has(entry.id) &&
-        !(entry.kind === "work" && entry.entry.sourceActivityKind === "context-compaction") &&
+        !(entry.kind === "work" && isTimelineDividerActivityKind(entry.entry.sourceActivityKind)) &&
         !(entry.kind === "message" && entry.message.role === "reasoning"),
     );
     if (!hidesFoldableWork) {
@@ -1040,7 +1038,7 @@ export function deriveMessagesTimelineRows(input: {
       !entryBelongsToActiveTurn(entry, index) ||
       entry.kind !== "work" ||
       entry.entry.questionAnswer !== undefined ||
-      entry.entry.sourceActivityKind === "context-compaction" ||
+      isTimelineDividerActivityKind(entry.entry.sourceActivityKind) ||
       entry.entry.tone === "error"
     ) {
       break;
@@ -1206,12 +1204,13 @@ export function deriveMessagesTimelineRows(input: {
 
     if (
       timelineEntry.kind === "work" &&
-      timelineEntry.entry.sourceActivityKind === "context-compaction"
+      isTimelineDividerActivityKind(timelineEntry.entry.sourceActivityKind)
     ) {
       nextRows.push({
-        kind: "context-compaction",
+        kind: "divider",
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
+        activityKind: timelineEntry.entry.sourceActivityKind,
         label: timelineEntry.entry.label,
       });
       continue;
@@ -1247,7 +1246,7 @@ export function deriveMessagesTimelineRows(input: {
           nextEntry.kind !== "work" ||
           nextEntry.entry.agentSpawn !== undefined ||
           nextEntry.entry.questionAnswer !== undefined ||
-          nextEntry.entry.sourceActivityKind === "context-compaction" ||
+          isTimelineDividerActivityKind(nextEntry.entry.sourceActivityKind) ||
           nextEntry.entry.tone === "error" ||
           activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||
@@ -1630,9 +1629,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return a.createdAt === bf.createdAt && a.label === bf.label && a.expanded === bf.expanded;
     }
 
-    case "context-compaction": {
-      const bc = b as typeof a;
-      return a.createdAt === bc.createdAt && a.label === bc.label;
+    case "divider": {
+      const bd = b as typeof a;
+      return (
+        a.createdAt === bd.createdAt && a.activityKind === bd.activityKind && a.label === bd.label
+      );
     }
 
     case "proposed-plan":

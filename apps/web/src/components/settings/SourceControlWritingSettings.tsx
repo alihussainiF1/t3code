@@ -301,7 +301,6 @@ export function SourceControlWritingSettingsSection() {
                 <ProviderModelPicker
                   activeInstanceId={activeSelection.instanceId}
                   model={activeSelection.model}
-                  lockedProvider={null}
                   instanceEntries={instanceEntries}
                   modelOptionsByInstance={modelOptionsByInstance}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}

@@ -221,7 +221,6 @@ describe("adjacentModelPickerProvider", () => {
   const unavailable = entry("error");
   const input = {
     entries: [codex, unavailable, claude],
-    disabledInstanceIds: undefined,
     selectableUnavailableInstanceIds: undefined,
   };
 
@@ -241,15 +240,7 @@ describe("adjacentModelPickerProvider", () => {
     ).toBe("favorites");
   });
 
-  it("keeps thread locks and the selected unavailable catalog", () => {
-    expect(
-      adjacentModelPickerProvider({
-        ...input,
-        disabledInstanceIds: new Set([claude.instanceId]),
-        selectedInstanceId: codex.instanceId,
-        direction: 1,
-      }),
-    ).toBe("favorites");
+  it("keeps the selected unavailable catalog", () => {
     expect(
       adjacentModelPickerProvider({
         ...input,

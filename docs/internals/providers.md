@@ -64,6 +64,19 @@ run before the prompt. They reject profiles with such configuration before launc
 instructions and tool denial do not create a native sandbox.
 See [helper constraints](../../apps/server/src/textGeneration/AntigravityTextGeneration.ts).
 
+## Provider handoff
+
+A thread can move to a provider instance that cannot resume its native session (another driver,
+or an incompatible continuation key). The
+[reactor](../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts) starts the new
+session fresh and appends a `provider.handoff` activity. That activity, not process memory, marks
+the handoff as pending: the next send to the new instance carries a preamble rendered by
+[threadHandoff](../../apps/server/src/orchestration/threadHandoff.ts) from the T3 transcript until
+a turn starts after it. This survives restarts and failed starts, and a revert past the switch
+makes it pending again. The activity also records how many checkpointed turns ran before the
+switch, so [rewind](../../apps/server/src/orchestration/Layers/CheckpointReactor.ts) only asks the
+new provider to roll back turns it actually ran.
+
 ## Provider updates run only through the owning installer
 
 A one-click update is offered only when the resolved executable's path proves which installer owns

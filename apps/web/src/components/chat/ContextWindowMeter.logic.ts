@@ -1,12 +1,9 @@
-import type { ModelSelection, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
   isClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
-import {
-  resolveSelectableProviderInstanceEntry,
-  type ProviderInstanceEntry,
-} from "../../providerInstances";
+import type { ProviderInstanceEntry } from "../../providerInstances";
 import { getTriggerDisplayModelName, type ModelEsque } from "./providerIconUtils";
 
 const CLAUDE_RESUME_COMPACTION_MINUTES = 70;
@@ -16,30 +13,6 @@ export function providerSupportsManualCompaction(
   provider: ProviderInstanceEntry | null | undefined,
 ): boolean {
   return provider?.snapshot.slashCommands.some((command) => command.name === "compact") ?? false;
-}
-
-export function hasAvailableCompactionProvider(input: {
-  readonly providers: ReadonlyArray<ProviderInstanceEntry>;
-  readonly driverKind: ProviderDriverKind;
-  readonly instanceId: ProviderInstanceId | null;
-  readonly lockedInstanceId: ProviderInstanceId | null;
-}): boolean {
-  const driverProviders = input.providers.filter(
-    (provider) => provider.driverKind === input.driverKind,
-  );
-  const lockedContinuationGroupKey = input.lockedInstanceId
-    ? driverProviders.find((provider) => provider.instanceId === input.lockedInstanceId)
-        ?.continuationGroupKey
-    : undefined;
-  const compatibleProviders = lockedContinuationGroupKey
-    ? driverProviders.filter(
-        (provider) => provider.continuationGroupKey === lockedContinuationGroupKey,
-      )
-    : driverProviders;
-
-  return providerSupportsManualCompaction(
-    resolveSelectableProviderInstanceEntry(compatibleProviders, input.instanceId ?? undefined),
-  );
 }
 
 export function hasDismissedResumeCompaction(

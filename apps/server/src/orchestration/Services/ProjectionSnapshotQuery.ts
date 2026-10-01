@@ -89,6 +89,12 @@ export interface ProjectionSnapshotQueryShape {
     readonly requestId: ApprovalRequestId;
   }) => Effect.Effect<Option.Option<OrchestrationThreadActivity>, ProjectionRepositoryError>;
 
+  /** Read a thread's most recent activity of one kind without loading its history. */
+  readonly getLatestThreadActivityByKind: (input: {
+    readonly threadId: ThreadId;
+    readonly kind: string;
+  }) => Effect.Effect<Option.Option<OrchestrationThreadActivity>, ProjectionRepositoryError>;
+
   /**
    * Read every activity of one kind across active (not deleted, not archived)
    * threads, without hydrating the threads. Used at startup to find state a
