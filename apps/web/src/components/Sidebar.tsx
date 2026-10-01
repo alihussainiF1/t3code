@@ -157,8 +157,11 @@ import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import {
   buildThreadActionMenuItems,
   listThreadMcpConnectors,
+  listThreadSkills,
   mcpConnectorIdFromMenuAction,
+  skillIdFromMenuAction,
   toggleThreadMcpConnector,
+  toggleThreadSkill,
 } from "./threadActionMenu.logic";
 import {
   animateSidebarLayoutChanges,
@@ -2202,6 +2205,7 @@ export default function Sidebar() {
     reorderActiveThread,
     setThreadAutoSettle,
     setThreadMcpConnectors,
+    setThreadSkills,
     archiveThread,
     deleteThread,
   } = useThreadActions();
@@ -4082,6 +4086,10 @@ export default function Sidebar() {
                 thread.disabledMcpConnectorIds,
               )
             : null;
+        const skills =
+          threadServerConfig?.environment.capabilities.skills === true
+            ? listThreadSkills(threadServerConfig.settings.skills, thread.disabledSkillIds)
+            : null;
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
@@ -4123,6 +4131,7 @@ export default function Sidebar() {
               },
               snoozePresets,
               mcpConnectors,
+              skills,
             }),
             position,
           ),
@@ -4140,6 +4149,24 @@ export default function Sidebar() {
               stackedThreadToast({
                 type: "error",
                 title: "Failed to update connectors",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          return;
+        }
+        const skillId = clicked.value ? skillIdFromMenuAction(clicked.value) : null;
+        if (skillId !== null) {
+          const result = await setThreadSkills(
+            threadRef,
+            toggleThreadSkill(thread.disabledSkillIds, skillId),
+          );
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to update skills",
                 description: error instanceof Error ? error.message : "An error occurred.",
               }),
             );
@@ -4353,6 +4380,7 @@ export default function Sidebar() {
       setProjectScopeKey,
       setThreadAutoSettle,
       setThreadMcpConnectors,
+      setThreadSkills,
       startThreadRename,
       updateThreadMetadata,
       timestampFormat,

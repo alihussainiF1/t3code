@@ -153,7 +153,11 @@ function SettingsRouteLayout() {
   return (
     <SettingsScopeProvider
       search={rawSearch}
-      singleEnvironment={pathname === "/settings/providers" || pathname === "/settings/connectors"}
+      singleEnvironment={
+        pathname === "/settings/providers" ||
+        pathname === "/settings/connectors" ||
+        pathname === "/settings/skills"
+      }
       onChange={(next) => {
         // Send every axis so the retain middleware sees an explicit target
         // even when the choice is "all", which is the absence of a key.

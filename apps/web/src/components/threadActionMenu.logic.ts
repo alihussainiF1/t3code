@@ -1,4 +1,10 @@
-import type { ContextMenuItem, McpConnectorConfig, McpConnectorId } from "@t3tools/contracts";
+import type {
+  ContextMenuItem,
+  McpConnectorConfig,
+  McpConnectorId,
+  SkillConfig,
+  SkillId,
+} from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
 /**
@@ -20,6 +26,9 @@ export type ThreadActionMenuId =
   | "mcp-connectors"
   | "mcp-connectors:hint"
   | `mcp-connector:${string}`
+  | "skills"
+  | "skills:hint"
+  | `skill:${string}`
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
@@ -67,6 +76,44 @@ export interface ThreadActionMenuState {
    * thread turned them off. Null hides the submenu (older server).
    */
   readonly mcpConnectors: ReadonlyArray<ThreadMcpConnectorOption> | null;
+  /** Library skills, same contract as `mcpConnectors`. Absent hides the submenu. */
+  readonly skills?: ReadonlyArray<ThreadSkillOption> | null;
+}
+
+export interface ThreadSkillOption {
+  readonly id: SkillId;
+  readonly name: string;
+  readonly enabledForThread: boolean;
+}
+
+const SKILL_ACTION_PREFIX = "skill:";
+
+/** The environment's enabled library skills with this thread's opt-outs applied, by name. */
+export function listThreadSkills(
+  skills: Readonly<Record<SkillId, SkillConfig>>,
+  disabledIds: ReadonlyArray<SkillId> | undefined,
+): ThreadSkillOption[] {
+  const disabled = new Set(disabledIds ?? []);
+  return (Object.entries(skills) as Array<[SkillId, SkillConfig]>)
+    .filter(([, config]) => config.enabled)
+    .map(([id, config]) => ({ id, name: config.name, enabledForThread: !disabled.has(id) }))
+    .toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+/** The skill a menu action toggles, or null for any other action. */
+export function skillIdFromMenuAction(action: ThreadActionMenuId): SkillId | null {
+  return action.startsWith(SKILL_ACTION_PREFIX)
+    ? (action.slice(SKILL_ACTION_PREFIX.length) as SkillId)
+    : null;
+}
+
+/** The thread's full disabled skill set after toggling one, like connectors. */
+export function toggleThreadSkill(
+  disabledIds: ReadonlyArray<SkillId> | undefined,
+  id: SkillId,
+): SkillId[] {
+  const current = disabledIds ?? [];
+  return current.includes(id) ? current.filter((candidate) => candidate !== id) : [...current, id];
 }
 
 export interface ThreadMcpConnectorOption {
@@ -228,6 +275,28 @@ export function buildThreadActionMenuItems(
               })),
               {
                 id: "mcp-connectors:hint" as const,
+                label: "Applies from the next message",
+                disabled: true,
+                separatorBefore: true,
+              },
+            ],
+          },
+        ]
+      : []),
+    ...(state.skills && state.skills.length > 0
+      ? [
+          {
+            id: "skills" as const,
+            label: "Skills",
+            icon: "sparkles",
+            children: [
+              ...state.skills.map((skill) => ({
+                id: `${SKILL_ACTION_PREFIX}${skill.id}` as const,
+                label: skill.name,
+                checked: skill.enabledForThread,
+              })),
+              {
+                id: "skills:hint" as const,
                 label: "Applies from the next message",
                 disabled: true,
                 separatorBefore: true,

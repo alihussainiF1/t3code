@@ -813,6 +813,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.skills-set": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            disabledSkillIds: event.payload.disabledSkillIds,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
         case "thread.pin-reordered": {
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.threadId,

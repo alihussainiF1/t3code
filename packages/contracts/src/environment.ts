@@ -148,6 +148,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       sessions, and understands thread.mcp-connectors.set. Clients hide the
       Connectors page and per-thread toggles when absent. */
   mcpConnectors: Schema.optionalKey(Schema.Boolean),
+  /** Server keeps a skill library, delivers it to provider sessions, and
+      understands thread.skills.set. Clients hide the Skills page and
+      per-thread toggles when absent. */
+  skills: Schema.optionalKey(Schema.Boolean),
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),

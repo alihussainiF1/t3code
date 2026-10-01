@@ -1101,7 +1101,11 @@ export function makeCursorAdapter(
                     ...promptParts,
                     {
                       type: "text",
-                      text: buildRuntimeInstructions({ harness: "Cursor", model: resolvedModel }),
+                      text: buildRuntimeInstructions({
+                        harness: "Cursor",
+                        model: resolvedModel,
+                        skills: McpProviderSession.readSessionSkills(input.threadId)?.skills,
+                      }),
                     },
                   ],
             })

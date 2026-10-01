@@ -4933,6 +4933,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         extraArgs["thinking-display"] = "summarized";
       }
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+      const sessionSkills = McpProviderSession.readSessionSkills(input.threadId);
       const connectorServers = toClaudeMcpServers(
         McpProviderSession.readMcpConnectors(input.threadId),
       );
@@ -5006,6 +5007,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         // T3's connectors are the only MCP servers unless the user opted into
         // Claude's own (.mcp.json, user settings, plugins).
         ...(McpProviderSession.readMcpExclusive(input.threadId) ? { strictMcpConfig: true } : {}),
+        // Library skills arrive as a T3-generated local plugin; see SkillDelivery.
+        ...(sessionSkills
+          ? { plugins: [{ type: "local", path: sessionSkills.root, skipMcpDiscovery: true }] }
+          : {}),
       };
 
       yield* Effect.annotateCurrentSpan({
@@ -5303,11 +5308,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       attachmentsDir: serverConfig.attachmentsDir,
       boundInstanceId,
       modelCatalog,
-      skillNames: new Set(
-        skills
+      skillNames: new Set([
+        ...skills
           .filter((skill) => skill.enabled && skill.userInvocable !== false)
           .map((skill) => skill.name),
-      ),
+        // Plugin skills answer to their bare name as an alias of `t3:<id>`.
+        ...(McpProviderSession.readSessionSkills(context.session.threadId)?.skills ?? []).map(
+          (skill) => skill.id,
+        ),
+      ]),
     });
 
     if (steeringTurnState === null) context.turnStartMessageIds.push(turnId);

@@ -13,6 +13,7 @@ import {
 import {
   BlocksIcon,
   FolderIcon,
+  LibraryIcon,
   PackageIcon,
   SettingsIcon,
   UserRoundIcon,
@@ -238,6 +239,7 @@ const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
   project: FolderIcon,
   personal: UserRoundIcon,
   system: SettingsIcon,
+  library: LibraryIcon,
   other: PackageIcon,
 };
 
@@ -247,6 +249,7 @@ const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
   project: "Project",
   personal: "Personal",
   system: "System",
+  library: "Library",
   other: "Provider",
 };
 

@@ -350,6 +350,23 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                     ))}
                   </SettingsSection>
                 ) : null}
+                {config.environment.capabilities.skills === true &&
+                Object.keys(config.settings.skills).length > 0 ? (
+                  // Read-only: skills are installed and edited from desktop or web settings.
+                  <SettingsSection title="Skills">
+                    {Object.entries(config.settings.skills).map(([id, skill]) => (
+                      <View key={id} className="gap-1 p-4">
+                        <Text className="text-base font-t3-medium text-foreground">
+                          {skill.name}
+                        </Text>
+                        <Text className="text-sm text-foreground-muted" numberOfLines={2}>
+                          {skill.enabled ? "" : "Off · "}
+                          {skill.description}
+                        </Text>
+                      </View>
+                    ))}
+                  </SettingsSection>
+                ) : null}
               </>
             ) : null}
           </>

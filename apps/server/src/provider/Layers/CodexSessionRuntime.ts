@@ -195,6 +195,8 @@ export interface CodexSessionRuntimeOptions {
   readonly models?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
   /** Capabilities the session's `t3-code` MCP credential grants; drives the prompt blocks. */
   readonly mcpCapabilities?: ReadonlySet<string>;
+  /** Extra user skill roots (T3 library skills), registered right after initialize. */
+  readonly skillRoots?: ReadonlyArray<string>;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -2490,6 +2492,17 @@ export const makeCodexSessionRuntime = (
       yield* emitSessionEvent("session/connecting", "Starting Codex App Server session.");
       yield* client.request("initialize", buildCodexInitializeParams());
       yield* client.notify("initialized", undefined);
+      if (options.skillRoots && options.skillRoots.length > 0) {
+        // Scoped to this app-server process, which serves only this session.
+        // Older Codex builds lack the method; the session runs without them.
+        yield* client
+          .request("skills/extraRoots/set", { extraRoots: [...options.skillRoots] })
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Codex did not accept T3 library skills.", { cause }),
+            ),
+          );
+      }
 
       const requestedModel = normalizeCodexModelSlug(options.model);
 

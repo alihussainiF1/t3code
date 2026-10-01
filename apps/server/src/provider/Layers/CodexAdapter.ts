@@ -2368,6 +2368,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           });
         }
         const hasConnectors = connectorConfig.args.length > 0;
+        const sessionSkills = McpProviderSession.readSessionSkills(input.threadId);
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
@@ -2385,6 +2386,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { model: input.modelSelection.model }
             : {}),
           ...(serviceTier ? { serviceTier } : {}),
+          ...(sessionSkills ? { skillRoots: [sessionSkills.skillsDirectory] } : {}),
           ...(mcpSession || hasConnectors
             ? {
                 environment: {

@@ -6,6 +6,7 @@ import {
   ComposerContextId,
   EventId,
   McpConnectorId,
+  SkillId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -1749,5 +1750,30 @@ describe("applyThreadDetailEvent", () => {
       } as any);
       expect(result.kind).toBe("unchanged");
     });
+  });
+});
+
+describe("thread.skills-set", () => {
+  it("stores the disabled set and drops it when every skill is re-enabled", () => {
+    const event = (disabledSkillIds: ReadonlyArray<SkillId>, sequence: number) =>
+      ({
+        ...baseEventFields,
+        sequence,
+        occurredAt: "2026-04-01T05:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.skills-set",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          disabledSkillIds,
+          updatedAt: "2026-04-01T05:00:00.000Z",
+        },
+      }) as const;
+    const off = applyThreadDetailEvent(baseThread, event([SkillId.make("pdf")], 7));
+    expect(off.kind).toBe("updated");
+    if (off.kind !== "updated") return;
+    expect(off.thread.disabledSkillIds).toEqual(["pdf"]);
+    const on = applyThreadDetailEvent(off.thread, event([], 8));
+    expect(on.kind === "updated" && "disabledSkillIds" in on.thread).toBe(false);
   });
 });

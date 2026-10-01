@@ -13,6 +13,7 @@ import {
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { McpConnectorConfig, McpConnectorId } from "./mcpConnector.ts";
+import { SkillConfig, SkillId } from "./skill.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
@@ -1331,6 +1332,11 @@ export const ServerSettings = Schema.Struct({
   mcpConnectorsLoadProviderConfigs: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  /**
+   * Index of the skill library: each id names a folder under the server's
+   * skills directory. Files are written only through the skills RPCs.
+   */
+  skills: Schema.Record(SkillId, SkillConfig).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -1622,6 +1628,8 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(McpConnectorId, Schema.NullOr(McpConnectorConfig)),
   ),
   mcpConnectorsLoadProviderConfigs: Schema.optionalKey(Schema.Boolean),
+  /** Per-entry replacement (enable, provider allowlist). Removal goes through `skills.delete`. */
+  skills: Schema.optionalKey(Schema.Record(SkillId, Schema.NullOr(SkillConfig))),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

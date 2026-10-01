@@ -78,6 +78,7 @@ function threadDetailToShell(
     ...(thread.disabledMcpConnectorIds !== undefined
       ? { disabledMcpConnectorIds: thread.disabledMcpConnectorIds }
       : {}),
+    ...(thread.disabledSkillIds !== undefined ? { disabledSkillIds: thread.disabledSkillIds } : {}),
     pinnedAt: thread.pinnedAt,
     pinOrderKey: thread.pinOrderKey,
     snoozedUntil: thread.snoozedUntil ?? null,

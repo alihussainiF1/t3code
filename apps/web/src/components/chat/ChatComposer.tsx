@@ -979,6 +979,7 @@ import {
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
   resolveProviderSkillsForCwd,
+  withLibrarySkills,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
@@ -1940,9 +1941,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [selectedProviderEntry],
   );
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
-  const selectedProviderSkills = selectedProviderStatus
-    ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
-    : [];
+  const librarySkills = settings.skills;
+  const threadDisabledSkillIds = activeThread?.disabledSkillIds;
+  const selectedProviderSkills = useMemo(
+    () =>
+      selectedProviderStatus
+        ? withLibrarySkills(
+            resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd),
+            librarySkills,
+            selectedProviderStatus.driver,
+            threadDisabledSkillIds,
+          )
+        : [],
+    [selectedProviderStatus, gitCwd, librarySkills, threadDisabledSkillIds],
+  );
   const selectedProviderSlashCommands = selectedProviderStatus
     ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
     : [];

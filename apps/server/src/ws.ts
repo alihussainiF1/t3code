@@ -167,6 +167,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import { McpConnectorService } from "./mcp/connectors/McpConnectorService.ts";
+import { SkillLibrary } from "./skills/SkillLibrary.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
@@ -656,6 +657,7 @@ const makeWsRpcLayer = (
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const mcpConnectors = yield* McpConnectorService;
+      const skillLibrary = yield* SkillLibrary;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
           (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
@@ -2914,6 +2916,42 @@ const makeWsRpcLayer = (
             mcpConnectors.searchRegistry(input),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.skillsInstall]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsInstall, skillLibrary.install(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.skillsRead]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsRead, skillLibrary.read(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.skillsSave]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsSave, skillLibrary.save(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.skillsUpdate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.skillsUpdate,
+            skillLibrary.update(input).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.skillsDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.skillsDelete,
+            skillLibrary.remove(input).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.skillsDiscover]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsDiscover, skillLibrary.discover(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.skillsImport]: (input) =>
+          observeRpcEffect(WS_METHODS.skillsImport, skillLibrary.importSkills(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverGetTraceDiagnostics,

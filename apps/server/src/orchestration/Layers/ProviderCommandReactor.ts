@@ -2216,7 +2216,8 @@ const make = Effect.gen(function* () {
       }),
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
-      if (event.type === "thread.mcp-connectors-set") {
+      // Skills, like connectors, are handed to providers at session start.
+      if (event.type === "thread.mcp-connectors-set" || event.type === "thread.skills-set") {
         threadsWithChangedConnectors.add(event.payload.threadId);
         return;
       }

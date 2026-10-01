@@ -25,6 +25,7 @@ import {
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { McpConnectorId } from "./mcpConnector.ts";
+import { SkillId } from "./skill.ts";
 import {
   PullRequestActor,
   PullRequestChecksState,
@@ -846,6 +847,9 @@ export const OrchestrationThread = Schema.Struct({
   // MCP connectors the user turned off for this thread. Connectors not listed
   // follow the environment setting. Optional so older servers still decode.
   disabledMcpConnectorIds: Schema.optional(Schema.Array(McpConnectorId)),
+  // Library skills the user turned off for this thread. Optional so older
+  // servers still decode.
+  disabledSkillIds: Schema.optional(Schema.Array(SkillId)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
@@ -918,6 +922,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   disabledMcpConnectorIds: Schema.optional(Schema.Array(McpConnectorId)),
+  disabledSkillIds: Schema.optional(Schema.Array(SkillId)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
   session: Schema.NullOr(OrchestrationSession),
@@ -1245,6 +1250,15 @@ const ThreadMcpConnectorsSetCommand = Schema.Struct({
   disabledMcpConnectorIds: Schema.Array(McpConnectorId),
 });
 
+const ThreadSkillsSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.skills.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  // The full set of library skills turned off for this thread; an empty list
+  // re-enables every skill. Takes effect on the next provider session.
+  disabledSkillIds: Schema.Array(SkillId),
+});
+
 const ThreadActiveReorderCommand = Schema.Struct({
   type: Schema.Literal("thread.active.reorder"),
   commandId: CommandId,
@@ -1455,6 +1469,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadPinReorderCommand,
   ThreadAutoSettleSetCommand,
   ThreadMcpConnectorsSetCommand,
+  ThreadSkillsSetCommand,
   ThreadActiveReorderCommand,
   ThreadMetaUpdateCommand,
   ThreadPullRequestLinkCommand,
@@ -1490,6 +1505,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadPinReorderCommand,
   ThreadAutoSettleSetCommand,
   ThreadMcpConnectorsSetCommand,
+  ThreadSkillsSetCommand,
   ThreadActiveReorderCommand,
   ThreadMetaUpdateCommand,
   ThreadPullRequestLinkCommand,
@@ -1720,6 +1736,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.pin-reordered",
   "thread.auto-settle-set",
   "thread.mcp-connectors-set",
+  "thread.skills-set",
   "thread.meta-updated",
   "thread.pull-request-linked",
   "thread.pull-request-unlinked",
@@ -1868,6 +1885,12 @@ export const ThreadAutoSettleSetPayload = Schema.Struct({
 export const ThreadMcpConnectorsSetPayload = Schema.Struct({
   threadId: ThreadId,
   disabledMcpConnectorIds: Schema.Array(McpConnectorId),
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadSkillsSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  disabledSkillIds: Schema.Array(SkillId),
   updatedAt: IsoDateTime,
 });
 
@@ -2144,6 +2167,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.mcp-connectors-set"),
     payload: ThreadMcpConnectorsSetPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.skills-set"),
+    payload: ThreadSkillsSetPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

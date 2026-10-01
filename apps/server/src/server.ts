@@ -73,6 +73,7 @@ import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpConnectorService from "./mcp/connectors/McpConnectorService.ts";
+import * as SkillLibrary from "./skills/SkillLibrary.ts";
 import { mcpConnectorOAuthRouteLayer } from "./mcp/connectors/McpConnectorOAuthRoute.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
@@ -303,6 +304,8 @@ const ProviderLayerLive = ProviderServiceLive.pipe(
       Layer.provide(ServerSecretStore.layer),
     ),
   ),
+  // Provider sessions resolve library skills; the WS handlers manage the library.
+  Layer.provideMerge(SkillLibrary.layer().pipe(Layer.provide(ServerSettingsLayerLive))),
 );
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));

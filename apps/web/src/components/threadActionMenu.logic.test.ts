@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { McpConnectorId } from "@t3tools/contracts";
+import { McpConnectorId, SkillId } from "@t3tools/contracts";
 
 import {
   buildThreadActionMenuItems,
   listThreadMcpConnectors,
+  listThreadSkills,
   mcpConnectorIdFromMenuAction,
+  skillIdFromMenuAction,
   toggleThreadMcpConnector,
+  toggleThreadSkill,
   type ThreadActionMenuState,
 } from "./threadActionMenu.logic";
 
@@ -217,5 +220,43 @@ describe("thread MCP connectors", () => {
   it("toggles one id in the full disabled set, both ways", () => {
     expect(toggleThreadMcpConnector(undefined, github)).toEqual([github]);
     expect(toggleThreadMcpConnector([linear, github], github)).toEqual([linear]);
+  });
+});
+
+describe("thread skills", () => {
+  const pdf = SkillId.make("pdf");
+  const docx = SkillId.make("docx");
+  const skill = (name: string, enabled = true) => ({
+    name,
+    description: "",
+    enabled,
+    source: { type: "local" as const },
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  it("lists environment-enabled skills with this thread's opt-outs", () => {
+    expect(
+      listThreadSkills(
+        { [pdf]: skill("pdf"), [docx]: skill("docx"), [SkillId.make("off")]: skill("off", false) },
+        [pdf],
+      ),
+    ).toEqual([
+      { id: docx, name: "docx", enabledForThread: true },
+      { id: pdf, name: "pdf", enabledForThread: false },
+    ]);
+    expect(toggleThreadSkill([pdf], pdf)).toEqual([]);
+    expect(toggleThreadSkill(undefined, pdf)).toEqual([pdf]);
+  });
+
+  it("shows the submenu only when a skill can be toggled", () => {
+    expect(allIds({ ...baseState, skills: [] })).not.toContain("skills");
+    expect(allIds({ ...baseState, skills: null })).not.toContain("skills");
+    const menu = buildThreadActionMenuItems({
+      ...baseState,
+      skills: [{ id: pdf, name: "pdf", enabledForThread: true }],
+    }).find((item) => item.id === "skills");
+    expect(menu?.children?.[0]).toMatchObject({ id: "skill:pdf", checked: true });
+    expect(skillIdFromMenuAction("skill:pdf")).toBe(pdf);
+    expect(skillIdFromMenuAction("skills:hint")).toBeNull();
   });
 });

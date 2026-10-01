@@ -1152,6 +1152,46 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.connectorId]),
       },
     }),
+    // Skill library. Every write also updates settings, so they queue behind
+    // settings updates; reads and discovery are plain queries.
+    discoverSkills: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:skills:discover",
+      tag: WS_METHODS.skillsDiscover,
+    }),
+    readSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:read",
+      tag: WS_METHODS.skillsRead,
+    }),
+    installSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:install",
+      tag: WS_METHODS.skillsInstall,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    saveSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:save",
+      tag: WS_METHODS.skillsSave,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    updateSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:update",
+      tag: WS_METHODS.skillsUpdate,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    deleteSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:delete",
+      tag: WS_METHODS.skillsDelete,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    importSkills: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:skills:import",
+      tag: WS_METHODS.skillsImport,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     disconnectMcpConnectorOAuth: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:mcp-connectors:oauth-disconnect",
       tag: WS_METHODS.mcpConnectorsOAuthDisconnect,

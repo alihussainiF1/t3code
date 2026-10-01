@@ -20,6 +20,7 @@ export * from "./providerUsageLimits.ts";
 export * from "./usageLimitSourceId.ts";
 export * from "./mcpConnector.ts";
 export * from "./mcpConnectorCatalog.ts";
+export * from "./skill.ts";
 export * from "./model.ts";
 export * from "./keybindings.ts";
 export * from "./server.ts";

@@ -917,6 +917,37 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.skills.set": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // The command carries the full set. Normalize it (dedupe + sort) so the
+      // stored set is canonical, and keep updatedAt when nothing changed so a
+      // re-sent set does not churn ordering (same idempotency as auto-settle).
+      const disabledSkillIds = Array.from(new Set(command.disabledSkillIds)).toSorted();
+      const current = thread.disabledSkillIds ?? [];
+      const unchanged =
+        current.length === disabledSkillIds.length &&
+        current.every((id, index) => id === disabledSkillIds[index]);
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.skills-set",
+        payload: {
+          threadId: command.threadId,
+          disabledSkillIds,
+          updatedAt: unchanged ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
     case "thread.active.reorder": {
       const thread = yield* requireThreadNotArchived({
         readModel,

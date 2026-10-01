@@ -20,6 +20,7 @@ export type SettingsPath =
   | "/settings/providers"
   | "/settings/integrations"
   | "/settings/connectors"
+  | "/settings/skills"
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
@@ -92,6 +93,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
   "/settings/connectors": "Connectors",
+  "/settings/skills": "Skills",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
@@ -690,6 +692,29 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
   },
   {
+    id: "skills",
+    title: "Skills",
+    to: "/settings/skills",
+    searchTerms: [
+      "agent skills skill.md library install gallery github edit create provider claude codex instructions",
+    ],
+    environmentOnly: true,
+  },
+  {
+    id: "skills-gallery",
+    title: "Skill gallery",
+    to: "/settings/skills",
+    searchTerms: ["install skills one click anthropic openai pdf docx playwright frontend design"],
+    environmentOnly: true,
+  },
+  {
+    id: "skills-import",
+    title: "Import skills",
+    to: "/settings/skills",
+    searchTerms: ["existing skills claude codex agents folder discover import all"],
+    environmentOnly: true,
+  },
+  {
     id: "automatic-pull",
     title: "Automatically pull",
     to: "/settings/source-control",
@@ -878,6 +903,8 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/integrations": null,
   // Connectors are machine state like providers: one environment at a time.
   "/settings/connectors": null,
+  // Skills are machine state too: the library lives on one environment.
+  "/settings/skills": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
