@@ -997,7 +997,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     Effect.gen(function* () {
       const connectors = yield* resolveMcpConnectors(threadId, providerInstanceId);
-      yield* Effect.sync(() => McpProviderSession.setMcpConnectors(threadId, connectors));
+      // T3 is the only MCP source unless the user opted into each provider's own config.
+      const loadProviderConfigs = yield* serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.mcpConnectorsLoadProviderConfigs),
+        Effect.orElseSucceed(() => false),
+      );
+      yield* Effect.sync(() => {
+        McpProviderSession.setMcpConnectors(threadId, connectors);
+        McpProviderSession.setMcpExclusive(threadId, !loadProviderConfigs);
+      });
       const capabilities = yield* agentAccessCapabilities(threadId);
       const credential = yield* issueMcpCredential({ threadId, providerInstanceId, capabilities });
       if (credential) {

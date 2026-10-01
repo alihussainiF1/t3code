@@ -2,12 +2,14 @@ import { type McpConnectorConfig, ProviderDriverKind } from "@t3tools/contracts"
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  codexConfiguredMcpServerNames,
   filterAcpMcpServersByCapabilities,
   resolveMcpConnectors,
   type ResolvedMcpConnector,
   toAcpMcpServers,
   toClaudeMcpServers,
   toCodexMcpConfig,
+  toCodexMcpDisableArgs,
   toOpenCodeMcpConfigs,
 } from "./McpConnectorTranslators.ts";
 
@@ -253,5 +255,29 @@ describe("toOpenCodeMcpConfigs", () => {
         },
       },
     ]);
+  });
+});
+
+describe("Codex exclusivity", () => {
+  it("lists the servers a Codex config.toml defines", () => {
+    expect(
+      codexConfiguredMcpServerNames(
+        '[mcp_servers.linear]\nurl = "https://mcp.linear.app/mcp"\n\n[mcp_servers."my.local"]\ncommand = "x"\n',
+      ),
+    ).toEqual(["linear", "my.local"]);
+    expect(codexConfiguredMcpServerNames("not = [valid")).toEqual([]);
+    expect(codexConfiguredMcpServerNames('model = "gpt-5"')).toEqual([]);
+  });
+
+  it("turns off every configured server T3 does not set, by name", () => {
+    expect(
+      toCodexMcpDisableArgs(
+        ["linear", "sentry", "t3-code", "my.local", "sentry"],
+        ["t3-code", "linear"],
+      ),
+    ).toEqual({
+      args: ["-c", "mcp_servers.sentry.enabled=false"],
+      unaddressable: ["my.local"],
+    });
   });
 });

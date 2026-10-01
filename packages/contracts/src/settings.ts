@@ -1323,6 +1323,14 @@ export const ServerSettings = Schema.Struct({
   mcpConnectors: Schema.Record(McpConnectorId, McpConnectorConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /**
+   * Also load the MCP servers each provider configures itself (Codex
+   * config.toml, Claude settings, OpenCode config). Off by default, so the
+   * connectors above are the only MCP servers agents see.
+   */
+  mcpConnectorsLoadProviderConfigs: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -1613,6 +1621,7 @@ export const ServerSettingsPatch = Schema.Struct({
   mcpConnectors: Schema.optionalKey(
     Schema.Record(McpConnectorId, Schema.NullOr(McpConnectorConfig)),
   ),
+  mcpConnectorsLoadProviderConfigs: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

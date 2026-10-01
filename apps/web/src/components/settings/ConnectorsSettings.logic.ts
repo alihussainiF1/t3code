@@ -1,5 +1,7 @@
 import {
   type DiscoveredMcpServer,
+  type McpCatalogEntry,
+  type McpConnectorCheck,
   type McpConnectorConfig,
   McpConnectorId,
   type McpConnectorDiscoverySource,
@@ -145,7 +147,14 @@ export function buildConnectorConfig(
   const name = form.name.trim();
   if (name.length === 0) return { ok: false, error: "Enter a name." };
   const providers = form.providers === null ? {} : { providers: [...form.providers] };
-  const base = { name, enabled: previous?.enabled ?? true, ...providers };
+  // The last check described the old settings, so an edit drops it; the
+  // catalog link stays so the connector keeps its tile.
+  const base = {
+    name,
+    enabled: previous?.enabled ?? true,
+    ...providers,
+    ...(previous?.catalogId ? { catalogId: previous.catalogId } : {}),
+  };
   if (form.transport === "stdio") {
     const command = form.command.trim();
     if (command.length === 0)
@@ -248,6 +257,128 @@ export function groupDiscoveredServers(
     },
   );
 }
+
+/** Discovered servers an Import all would add: importable and not already a connector. */
+export function importableDiscoveredServers(
+  servers: ReadonlyArray<DiscoveredMcpServer>,
+): ReadonlyArray<DiscoveredMcpServer> {
+  const seen = new Set<string>();
+  return servers.filter((server) => {
+    const key = server.name.toLowerCase();
+    if (discoveredServerImportState(server) !== "importable" || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// ── Catalog ─────────────────────────────────────────────────────────────
+
+const normalizeUrl = (url: string) => url.trim().replace(/\/+$/, "").toLowerCase();
+
+export type CatalogTileState =
+  | { readonly kind: "available" }
+  | {
+      readonly kind: "added";
+      readonly id: McpConnectorId;
+      readonly config: McpConnectorConfig;
+      /** Absent until the first check finishes. */
+      readonly check: McpConnectorCheck | undefined;
+      readonly usesOAuth: boolean;
+    };
+
+/**
+ * Whether a catalog entry is already a connector: added from that entry, or
+ * (for imported servers) pointing at the same remote URL.
+ */
+export function catalogTileState(
+  entry: McpCatalogEntry,
+  connectors: Readonly<Record<string, McpConnectorConfig>>,
+): CatalogTileState {
+  const entryUrl =
+    entry.connector.transport.type === "http" ? normalizeUrl(entry.connector.transport.url) : null;
+  const match =
+    Object.entries(connectors).find(([, config]) => config.catalogId === entry.id) ??
+    (entryUrl === null
+      ? undefined
+      : Object.entries(connectors).find(
+          ([, config]) =>
+            config.transport.type === "http" && normalizeUrl(config.transport.url) === entryUrl,
+        ));
+  if (!match) return { kind: "available" };
+  const [id, config] = match;
+  return {
+    kind: "added",
+    id: id as McpConnectorId,
+    config,
+    check: config.lastCheck,
+    usesOAuth: config.transport.type === "http" && config.transport.auth.type === "oauth",
+  };
+}
+
+/** Built-in entries matching a search, by name or description. */
+export function filterCatalog(
+  entries: ReadonlyArray<McpCatalogEntry>,
+  query: string,
+): ReadonlyArray<McpCatalogEntry> {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return entries;
+  return entries.filter((entry) => {
+    const text = `${entry.name} ${entry.description}`.toLowerCase();
+    return terms.every((term) => text.includes(term));
+  });
+}
+
+/** Registry results minus the ones the built-in catalog already offers. */
+export function registryEntriesToShow(
+  registry: ReadonlyArray<McpCatalogEntry>,
+  builtIns: ReadonlyArray<McpCatalogEntry>,
+): ReadonlyArray<McpCatalogEntry> {
+  const builtInUrls = new Set(
+    builtIns.flatMap((entry) =>
+      entry.connector.transport.type === "http"
+        ? [normalizeUrl(entry.connector.transport.url)]
+        : [],
+    ),
+  );
+  return registry.filter(
+    (entry) =>
+      entry.connector.transport.type !== "http" ||
+      !builtInUrls.has(normalizeUrl(entry.connector.transport.url)),
+  );
+}
+
+/** Short status text for a connector's last check. */
+export function connectorCheckLabel(check: McpConnectorCheck | undefined): string {
+  if (!check) return "Not checked";
+  if (check.status === "connected") {
+    const count = check.toolCount ?? 0;
+    return `Connected · ${count} ${count === 1 ? "tool" : "tools"}`;
+  }
+  return check.status === "needs-auth" ? "Needs sign-in" : "Not working";
+}
+
+export const RUNTIME_FIXES: Readonly<
+  Record<
+    "npx" | "uvx" | "docker",
+    { readonly name: string; readonly url: string; readonly how: string }
+  >
+> = {
+  npx: {
+    name: "Node.js",
+    url: "https://nodejs.org/en/download",
+    how: "Install Node.js, which includes npx, on the machine running this environment.",
+  },
+  uvx: {
+    name: "uv",
+    url: "https://docs.astral.sh/uv/getting-started/installation/",
+    how: "Install uv, which includes uvx, on the machine running this environment: curl -LsSf https://astral.sh/uv/install.sh | sh",
+  },
+  docker: {
+    name: "Docker",
+    url: "https://docs.docker.com/get-started/get-docker/",
+    how: "Install Docker on the machine running this environment and make sure it is running.",
+  },
+};
 
 /** Whether an Import action applies; already-imported or unrepresentable entries cannot. */
 export function discoveredServerImportState(

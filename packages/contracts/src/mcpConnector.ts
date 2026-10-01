@@ -85,6 +85,20 @@ export const McpConnectorTransport = Schema.Union([
 ]);
 export type McpConnectorTransport = typeof McpConnectorTransport.Type;
 
+/**
+ * The result of the server's last "does it work" check: an MCP initialize
+ * and tools/list against the connector with its saved credentials.
+ */
+export const McpConnectorCheck = Schema.Struct({
+  status: Schema.Literals(["connected", "needs-auth", "error"]),
+  /** Tools the server listed; set when connected. */
+  toolCount: Schema.optionalKey(Schema.Number),
+  /** Why the check failed; set on error. */
+  message: Schema.optionalKey(Schema.String),
+  checkedAt: Schema.String,
+});
+export type McpConnectorCheck = typeof McpConnectorCheck.Type;
+
 export const McpConnectorConfig = Schema.Struct({
   name: TrimmedNonEmptyString,
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -94,6 +108,10 @@ export const McpConnectorConfig = Schema.Struct({
    * provider; an empty list means none.
    */
   providers: Schema.optionalKey(Schema.Array(ProviderDriverKind)),
+  /** Catalog entry the connector was added from, so its tile shows the connection. */
+  catalogId: Schema.optionalKey(Schema.String),
+  /** Written by the server after each check; absent until the first one. */
+  lastCheck: Schema.optionalKey(McpConnectorCheck),
 });
 export type McpConnectorConfig = typeof McpConnectorConfig.Type;
 
@@ -171,6 +189,55 @@ export const McpConnectorOAuthDisconnectInput = Schema.Struct({
   connectorId: McpConnectorId,
 });
 export type McpConnectorOAuthDisconnectInput = typeof McpConnectorOAuthDisconnectInput.Type;
+
+export const McpConnectorImportAllInput = Schema.Struct({
+  cwd: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type McpConnectorImportAllInput = typeof McpConnectorImportAllInput.Type;
+
+export const McpConnectorImportAllResult = Schema.Struct({
+  imported: Schema.Array(McpConnectorId),
+  skipped: Schema.Array(Schema.Struct({ name: Schema.String, reason: Schema.String })),
+});
+export type McpConnectorImportAllResult = typeof McpConnectorImportAllResult.Type;
+
+// ── Adding and checking connectors ──────────────────────────────────────
+
+export const McpConnectorInstallInput = Schema.Struct({
+  config: McpConnectorConfig,
+});
+export type McpConnectorInstallInput = typeof McpConnectorInstallInput.Type;
+
+export const McpConnectorInstallResult = Schema.Struct({
+  connectorId: McpConnectorId,
+  /** The first check. OAuth connectors report needs-auth until signed in. */
+  check: McpConnectorCheck,
+});
+export type McpConnectorInstallResult = typeof McpConnectorInstallResult.Type;
+
+export const McpConnectorTestInput = Schema.Struct({
+  connectorId: McpConnectorId,
+});
+export type McpConnectorTestInput = typeof McpConnectorTestInput.Type;
+
+/** Launchers that local catalog entries rely on, as found on the environment's PATH. */
+export const McpConnectorRuntimes = Schema.Struct({
+  npx: Schema.Boolean,
+  uvx: Schema.Boolean,
+  docker: Schema.Boolean,
+});
+export type McpConnectorRuntimes = typeof McpConnectorRuntimes.Type;
+
+export const McpConnectorIconsInput = Schema.Struct({
+  domains: Schema.Array(Schema.String).check(Schema.isMaxLength(64)),
+});
+export type McpConnectorIconsInput = typeof McpConnectorIconsInput.Type;
+
+export const McpConnectorIconsResult = Schema.Struct({
+  /** `data:` URLs by domain; null when the domain has no usable icon. */
+  icons: Schema.Record(Schema.String, Schema.NullOr(Schema.String)),
+});
+export type McpConnectorIconsResult = typeof McpConnectorIconsResult.Type;
 
 export class McpConnectorError extends Schema.TaggedError<McpConnectorError>()(
   "McpConnectorError",

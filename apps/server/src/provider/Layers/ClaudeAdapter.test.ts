@@ -40,6 +40,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
   SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
@@ -564,6 +565,33 @@ describe("ClaudeAdapterLive", () => {
         autoCompactWindow: 300000,
       });
       assert.deepEqual(options?.supportedDialogKinds, ["resume_return"]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("loads only T3's MCP servers unless the user opted into Claude's own", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const start = (threadId: ThreadId) =>
+        adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+
+      const exclusive = ThreadId.make("thread-mcp-exclusive");
+      McpProviderSession.setMcpExclusive(exclusive, true);
+      yield* start(exclusive).pipe(
+        Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(exclusive))),
+      );
+      assert.equal(harness.getLastCreateQueryInput()?.options.strictMcpConfig, true);
+
+      // ProviderService leaves the flag off when the user opts into Claude's own servers.
+      yield* start(THREAD_ID);
+      assert.equal(harness.getLastCreateQueryInput()?.options.strictMcpConfig, undefined);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

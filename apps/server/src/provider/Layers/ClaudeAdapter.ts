@@ -5003,6 +5003,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
+        // T3's connectors are the only MCP servers unless the user opted into
+        // Claude's own (.mcp.json, user settings, plugins).
+        ...(McpProviderSession.readMcpExclusive(input.threadId) ? { strictMcpConfig: true } : {}),
       };
 
       yield* Effect.annotateCurrentSpan({

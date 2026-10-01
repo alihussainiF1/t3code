@@ -1158,6 +1158,43 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    importAllMcpConnectors: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:mcp-connectors:import-all",
+      tag: WS_METHODS.mcpConnectorsImportAll,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    // Install and test run an MCP handshake (up to a minute or more for a first
+    // npx download), so they stay off the settings queue and run per connector.
+    installMcpConnector: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:mcp-connectors:install",
+      tag: WS_METHODS.mcpConnectorsInstall,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.config.catalogId ?? input.config.name]),
+      },
+    }),
+    testMcpConnector: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:mcp-connectors:test",
+      tag: WS_METHODS.mcpConnectorsTest,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.connectorId]),
+      },
+    }),
+    mcpConnectorRuntimes: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:mcp-connectors:runtimes",
+      tag: WS_METHODS.mcpConnectorsRuntimes,
+    }),
+    mcpConnectorIcons: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:mcp-connectors:icons",
+      tag: WS_METHODS.mcpConnectorsIcons,
+    }),
+    searchMcpRegistry: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:mcp-connectors:registry",
+      tag: WS_METHODS.mcpConnectorsSearchRegistry,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

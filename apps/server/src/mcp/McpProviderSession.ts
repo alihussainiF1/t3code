@@ -48,11 +48,13 @@ export function readMcpProviderSession(threadId: ThreadId): McpProviderSessionCo
 export function clearMcpProviderSession(threadId: ThreadId): void {
   sessionsByThread.delete(threadId);
   connectorsByThread.delete(threadId);
+  exclusiveThreads.delete(threadId);
 }
 
 export function clearAllMcpProviderSessions(): void {
   sessionsByThread.clear();
   connectorsByThread.clear();
+  exclusiveThreads.clear();
 }
 
 /**
@@ -72,4 +74,21 @@ export function setMcpConnectors(
 
 export function readMcpConnectors(threadId: ThreadId): ReadonlyArray<ResolvedMcpConnector> {
   return connectorsByThread.get(threadId) ?? [];
+}
+
+/**
+ * Threads whose provider must load only T3's MCP servers, ignoring the ones
+ * in its own config. ProviderService sets this for every session from the
+ * `mcpConnectorsLoadProviderConfigs` setting (off by default, so exclusive);
+ * sessions started any other way keep the provider's own behavior.
+ */
+const exclusiveThreads = new Set<ThreadId>();
+
+export function setMcpExclusive(threadId: ThreadId, exclusive: boolean): void {
+  if (exclusive) exclusiveThreads.add(threadId);
+  else exclusiveThreads.delete(threadId);
+}
+
+export function readMcpExclusive(threadId: ThreadId): boolean {
+  return exclusiveThreads.has(threadId);
 }

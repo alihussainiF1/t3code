@@ -2898,6 +2898,27 @@ export function makeOpenCodeAdapter(
                   }),
                 );
               }
+              // T3's connectors are the only MCP servers unless the user opted
+              // into OpenCode's own config, so disconnect the ones it loaded.
+              if (!server.external && McpProviderSession.readMcpExclusive(input.threadId)) {
+                const t3Servers = new Set([
+                  "t3-code",
+                  ...McpProviderSession.readMcpConnectors(input.threadId).map(({ id }) => id),
+                ]);
+                yield* runOpenCodeSdk("mcp.status", () => client.mcp.status()).pipe(
+                  Effect.flatMap((response) =>
+                    Effect.forEach(
+                      Object.keys(response.data ?? {}).filter((name) => !t3Servers.has(name)),
+                      (name) =>
+                        runOpenCodeSdk("mcp.disconnect", () => client.mcp.disconnect({ name })),
+                      { discard: true },
+                    ),
+                  ),
+                  Effect.catch((cause) =>
+                    Effect.logWarning("Could not turn off OpenCode's own MCP servers", { cause }),
+                  ),
+                );
+              }
               // Resume: re-adopt the session named by the durable cursor —
               // OpenCode scopes history by session id. The probe recovers only
               // a confirmed not-found (start fresh); transport/auth/server

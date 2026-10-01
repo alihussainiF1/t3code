@@ -12,7 +12,18 @@
 import * as NodeOS from "node:os";
 
 import {
+  type McpConnectorCheck,
   type McpConnectorConfig,
+  type McpConnectorIconsInput,
+  type McpConnectorIconsResult,
+  type McpConnectorImportAllInput,
+  type McpConnectorImportAllResult,
+  type McpConnectorInstallInput,
+  type McpConnectorInstallResult,
+  type McpConnectorRuntimes,
+  type McpConnectorTestInput,
+  type McpRegistrySearchInput,
+  type McpRegistrySearchResult,
   type McpConnectorDiscoverInput,
   type McpConnectorDiscoverResult,
   McpConnectorError,
@@ -61,7 +72,20 @@ import {
   registerMcpOAuthClient,
   shouldRefreshMcpToken,
 } from "./McpOAuth.ts";
-import { resolveMcpConnectors, type ResolvedMcpConnector } from "./McpConnectorTranslators.ts";
+import {
+  resolveMcpConnector,
+  resolveMcpConnectors,
+  type ResolvedMcpConnector,
+} from "./McpConnectorTranslators.ts";
+import {
+  createHttpProbeTransport,
+  createStdioProbeTransport,
+  type McpProbeOutcome,
+  probeMcpServer,
+} from "./McpConnectorProbe.ts";
+import { searchMcpRegistry } from "./McpRegistry.ts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 
 /** Path of the OAuth redirect target on the T3 server. */
 export const MCP_CONNECTOR_OAUTH_CALLBACK_PATH = "/oauth/mcp-connectors/callback";
@@ -128,16 +152,39 @@ export class McpConnectorService extends Context.Service<
     readonly startOAuth: (
       input: McpConnectorOAuthStartInput,
     ) => Effect.Effect<McpConnectorOAuthStartResult, McpConnectorError>;
-    /** Handles the authorization server's redirect. Returns the connector's display name. */
+    /**
+     * Handles the authorization server's redirect: stores the grant, then
+     * checks the connector with it. Returns the display name and the check.
+     */
     readonly completeOAuth: (input: {
       readonly state: string;
       readonly code?: string;
       readonly error?: string;
       readonly errorDescription?: string;
-    }) => Effect.Effect<string, McpConnectorError>;
+    }) => Effect.Effect<
+      { readonly name: string; readonly check: McpConnectorCheck | undefined },
+      McpConnectorError
+    >;
     readonly disconnectOAuth: (
       input: McpConnectorOAuthDisconnectInput,
     ) => Effect.Effect<void, McpConnectorError>;
+    /** Imports every discovered server not already a connector, secrets included. */
+    readonly importAll: (
+      input: McpConnectorImportAllInput,
+    ) => Effect.Effect<McpConnectorImportAllResult, McpConnectorError>;
+    /** Adds a connector (usually from the catalog) and checks it. */
+    readonly install: (
+      input: McpConnectorInstallInput,
+    ) => Effect.Effect<McpConnectorInstallResult, McpConnectorError>;
+    /** Runs the MCP handshake against a connector and records the result on it. */
+    readonly test: (
+      input: McpConnectorTestInput,
+    ) => Effect.Effect<McpConnectorCheck, McpConnectorError>;
+    readonly runtimes: Effect.Effect<McpConnectorRuntimes>;
+    readonly icons: (input: McpConnectorIconsInput) => Effect.Effect<McpConnectorIconsResult>;
+    readonly searchRegistry: (
+      input: McpRegistrySearchInput,
+    ) => Effect.Effect<McpRegistrySearchResult, McpConnectorError>;
   }
 >()("t3/mcp/connectors/McpConnectorService") {}
 
@@ -145,7 +192,18 @@ export interface McpConnectorServiceOptions {
   readonly fetch?: FetchLike;
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly homeDirectory?: string;
+  /** Replaces the network/process handshake, for tests. */
+  readonly probe?: (connector: ResolvedMcpConnector) => Promise<McpProbeOutcome>;
 }
+
+const HTTP_PROBE_TIMEOUT_MS = 20_000;
+// First runs of npx/uvx download the package, which can take a while.
+const STDIO_PROBE_TIMEOUT_MS = 90_000;
+const REGISTRY_TIMEOUT_MS = 8_000;
+const REGISTRY_CACHE_TTL_MS = 10 * 60 * 1000;
+const ICON_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const ICON_MAX_BYTES = 32 * 1024;
+const DOMAIN_PATTERN = /^(?=.{1,253}$)[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
 
 const fail = (operation: string, detail: string, connectorId?: string) =>
   new McpConnectorError({ operation, detail, ...(connectorId ? { connectorId } : {}) });
@@ -169,6 +227,12 @@ export const make = (options: McpConnectorServiceOptions = {}) =>
     const pendingFlows = new Map<string, PendingOAuthFlow>();
     // Refresh tokens may rotate; two sessions refreshing at once would burn one.
     const refreshLock = yield* Semaphore.make(1);
+    // Server-side rewrites of one entry (connection time, check results) read
+    // the current entry and write it back; serializing them keeps a slow check
+    // from writing back a connection state it read before a disconnect.
+    const entryLock = yield* Semaphore.make(1);
+    // Checks started after a sign-in or an import outlive the request.
+    const serviceScope = yield* Effect.scope;
 
     const tryPromise = <A>(operation: string, connectorId: string, run: () => Promise<A>) =>
       Effect.tryPromise({
@@ -215,7 +279,7 @@ export const make = (options: McpConnectorServiceOptions = {}) =>
         yield* settingsService
           .updateSettings({ mcpConnectors: { [connectorId]: marked } })
           .pipe(Effect.mapError((cause) => fail("write-settings", cause.message, connectorId)));
-      });
+      }).pipe(entryLock.withPermits(1));
 
     const setConnectedAt = (connectorId: string, connectedAt: string | null) =>
       updateConnector(connectorId, (connector) =>
@@ -600,21 +664,272 @@ export const make = (options: McpConnectorServiceOptions = {}) =>
           ...(tokens.scope ? { scope: tokens.scope } : {}),
         });
         yield* setConnectedAt(flow.connectorId, DateTime.formatIso(DateTime.makeUnsafe(now)));
-        const settings = yield* getSettings;
-        return (
-          (settings.mcpConnectors as Record<string, McpConnectorConfig>)[flow.connectorId]?.name ??
-          flow.connectorId
+        // Verify the new token right away so the callback page and the
+        // Connectors page both say whether it works.
+        const check = yield* checkConnector(flow.connectorId, tokens.accessToken).pipe(
+          Effect.option,
         );
+        const settings = yield* getSettings;
+        return {
+          name:
+            (settings.mcpConnectors as Record<string, McpConnectorConfig>)[flow.connectorId]
+              ?.name ?? flow.connectorId,
+          check: Option.getOrUndefined(check),
+        };
       });
 
     const disconnectOAuth = (input: McpConnectorOAuthDisconnectInput) =>
       Effect.gen(function* () {
-        yield* secretStore
-          .remove(mcpConnectorSecretName(input.connectorId, "oauth"))
-          .pipe(
-            Effect.mapError((cause) => fail("oauth-disconnect", cause.message, input.connectorId)),
-          );
+        // Under the refresh lock, so an in-flight refresh cannot write the grant back.
+        yield* secretStore.remove(mcpConnectorSecretName(input.connectorId, "oauth")).pipe(
+          Effect.mapError((cause) => fail("oauth-disconnect", cause.message, input.connectorId)),
+          refreshLock.withPermits(1),
+        );
         yield* setConnectedAt(input.connectorId, null);
+        yield* updateConnector(input.connectorId, ({ lastCheck: _lastCheck, ...rest }) => rest);
+      });
+
+    const probeConnector = (connector: ResolvedMcpConnector) =>
+      Effect.gen(function* () {
+        const injected = options.probe;
+        if (injected) return yield* Effect.promise(() => injected(connector));
+        if (connector.type === "http") {
+          const headers: Record<string, string> = Object.fromEntries(
+            connector.headers.map((header) => [header.name, header.value]),
+          );
+          if (connector.bearerToken) headers.Authorization = `Bearer ${connector.bearerToken}`;
+          return yield* Effect.promise(() =>
+            probeMcpServer(createHttpProbeTransport(fetchImpl, connector.url, headers), {
+              timeoutMs: HTTP_PROBE_TIMEOUT_MS,
+            }),
+          );
+        }
+        const env = {
+          ...environment,
+          ...Object.fromEntries(connector.env.map((entry) => [entry.name, entry.value])),
+        };
+        const spawn = yield* resolveSpawnCommand(connector.command, connector.args, { env });
+        const platform = yield* HostProcessPlatform;
+        return yield* Effect.promise(async (): Promise<McpProbeOutcome> => {
+          try {
+            const transport = createStdioProbeTransport({
+              command: spawn.command,
+              args: spawn.args,
+              env,
+              shell: spawn.shell,
+              detached: platform !== "win32",
+              cwd: homeDirectory,
+            });
+            return await probeMcpServer(transport, { timeoutMs: STDIO_PROBE_TIMEOUT_MS });
+          } catch (cause) {
+            return { status: "error", message: describe(cause) };
+          }
+        });
+      });
+
+    /** `accessToken` skips the stored-token lookup right after a sign-in. */
+    const checkConnector = (connectorId: string, accessToken?: string) =>
+      Effect.gen(function* () {
+        const settings = yield* getSettings;
+        const connector = (settings.mcpConnectors as Record<string, McpConnectorConfig>)[
+          connectorId
+        ];
+        if (!connector) {
+          return yield* fail("check", "This connector no longer exists.", connectorId);
+        }
+        const usesOAuth =
+          connector.transport.type === "http" && connector.transport.auth.type === "oauth";
+        const token = !usesOAuth
+          ? undefined
+          : (accessToken ??
+            (yield* accessTokenFor(connectorId).pipe(Effect.orElseSucceed(() => undefined))));
+        const resolved = resolveMcpConnector(connectorId as McpConnectorId, connector, token);
+        const outcome: McpProbeOutcome =
+          "reason" in resolved
+            ? usesOAuth
+              ? { status: "needs-auth", message: "Sign in to connect." }
+              : connector.transport.type === "http" && connector.transport.auth.type === "bearer"
+                ? { status: "needs-auth", message: "Add a token to connect." }
+                : { status: "error", message: resolved.reason }
+            : yield* probeConnector(resolved);
+        const now = yield* Clock.currentTimeMillis;
+        const check: McpConnectorCheck = {
+          status: outcome.status,
+          ...(outcome.status === "connected" ? { toolCount: outcome.toolCount } : {}),
+          ...(outcome.status !== "connected" && outcome.message
+            ? { message: outcome.message }
+            : {}),
+          checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+        };
+        yield* updateConnector(connectorId, (current) => ({ ...current, lastCheck: check }));
+        return check;
+      });
+
+    /** Runs checks after the request that triggered them has answered. */
+    const checkInBackground = (connectorIds: ReadonlyArray<string>) =>
+      Effect.forEach(connectorIds, (id) => checkConnector(id).pipe(Effect.ignore), {
+        concurrency: 4,
+        discard: true,
+      }).pipe(Effect.forkIn(serviceScope), Effect.asVoid);
+
+    const install = (input: McpConnectorInstallInput) =>
+      Effect.gen(function* () {
+        const settings = yield* getSettings;
+        const connectorId = connectorIdFromName(
+          input.config.name,
+          new Set(Object.keys(settings.mcpConnectors)),
+        );
+        const { lastCheck: _lastCheck, ...config } = input.config;
+        yield* settingsService
+          .updateSettings({ mcpConnectors: { [connectorId]: config } })
+          .pipe(Effect.mapError((cause) => fail("install", cause.message, connectorId)));
+        let check = yield* checkConnector(connectorId);
+        // A remote server that asks for sign-in and publishes OAuth metadata
+        // becomes an OAuth connector, so the next click opens its sign-in page.
+        const transport = config.transport;
+        if (
+          check.status === "needs-auth" &&
+          transport.type === "http" &&
+          transport.auth.type === "none" &&
+          transport.headers.length === 0
+        ) {
+          const supportsOAuth = yield* Effect.tryPromise(() =>
+            discoverMcpOAuth(fetchImpl, transport.url),
+          ).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          );
+          if (supportsOAuth) {
+            check = { ...check, message: "Sign in to connect." };
+            const signInCheck = check;
+            yield* updateConnector(connectorId, (current) =>
+              current.transport.type === "http"
+                ? {
+                    ...current,
+                    transport: {
+                      ...current.transport,
+                      auth: { type: "oauth", scopes: "", clientId: "", connectedAt: null },
+                    },
+                    lastCheck: signInCheck,
+                  }
+                : current,
+            );
+          }
+        }
+        return { connectorId: connectorId as McpConnectorId, check };
+      });
+
+    const importAll = (input: McpConnectorImportAllInput) =>
+      Effect.gen(function* () {
+        const entries = yield* discoverEntries(input);
+        const settings = yield* getSettings;
+        const connectors: Readonly<Record<string, McpConnectorConfig>> = settings.mcpConnectors;
+        const taken = new Set(Object.keys(connectors));
+        const names = new Set(Object.values(connectors).map(({ name }) => name.toLowerCase()));
+        const patch: Record<string, McpConnectorConfig> = {};
+        const imported: McpConnectorId[] = [];
+        const skipped: Array<{ name: string; reason: string }> = [];
+        for (const entry of entries) {
+          // The same server is often configured in more than one CLI; the first wins.
+          if (names.has(entry.name.toLowerCase())) continue;
+          if (!entry.connector) {
+            skipped.push({ name: entry.name, reason: entry.note ?? "Cannot be imported." });
+            continue;
+          }
+          const id = connectorIdFromName(entry.name, taken);
+          taken.add(id);
+          names.add(entry.name.toLowerCase());
+          patch[id] = entry.connector;
+          imported.push(id);
+        }
+        if (imported.length > 0) {
+          // Real values go in; the settings service moves them into the secret store.
+          yield* settingsService
+            .updateSettings({ mcpConnectors: patch })
+            .pipe(Effect.mapError((cause) => fail("import", cause.message)));
+          yield* checkInBackground(imported);
+        }
+        return { imported, skipped };
+      });
+
+    const runtimes = Effect.gen(function* () {
+      const env = environment as NodeJS.ProcessEnv;
+      const [npx, uvx, docker] = yield* Effect.forEach(
+        ["npx", "uvx", "docker"],
+        (command) => isCommandAvailable(command, { env }).pipe(Effect.orElseSucceed(() => false)),
+        { concurrency: "unbounded" },
+      );
+      return { npx: npx ?? false, uvx: uvx ?? false, docker: docker ?? false };
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+
+    const registryCache = new Map<
+      string,
+      { readonly at: number; readonly result: McpRegistrySearchResult }
+    >();
+    const searchRegistry = (input: McpRegistrySearchInput) =>
+      Effect.gen(function* () {
+        const key = `${input.query.trim().toLowerCase()}\u0000${input.cursor ?? ""}`;
+        const now = yield* Clock.currentTimeMillis;
+        const cached = registryCache.get(key);
+        if (cached && now - cached.at < REGISTRY_CACHE_TTL_MS) return cached.result;
+        const result = yield* Effect.tryPromise({
+          try: () =>
+            searchMcpRegistry(fetchImpl, {
+              query: input.query,
+              ...(input.cursor ? { cursor: input.cursor } : {}),
+              timeoutMs: REGISTRY_TIMEOUT_MS,
+            }),
+          catch: (cause) =>
+            fail("registry", `Could not reach the MCP Registry: ${describe(cause)}`),
+        });
+        if (registryCache.size >= 100) registryCache.clear();
+        registryCache.set(key, { at: now, result });
+        return result;
+      });
+
+    const iconCache = new Map<string, { readonly at: number; readonly icon: string | null }>();
+    /**
+     * Icons are fetched here, not by clients, so a remote client never loads
+     * images from arbitrary origins; each one is a small PNG sent as a data URL.
+     */
+    const fetchIcon = async (domain: string): Promise<string | null> => {
+      try {
+        const response = await fetchImpl(
+          `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`,
+          { signal: AbortSignal.timeout(5_000) },
+        );
+        const type = response.headers.get("content-type") ?? "";
+        if (!response.ok || !type.startsWith("image/")) return null;
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (bytes.byteLength === 0 || bytes.byteLength > ICON_MAX_BYTES) return null;
+        return `data:${type.split(";")[0]};base64,${Buffer.from(bytes).toString("base64")}`;
+      } catch {
+        return null;
+      }
+    };
+    const icons = (input: McpConnectorIconsInput) =>
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        const domains = [
+          ...new Set(input.domains.map((domain) => domain.trim().toLowerCase())),
+        ].filter((domain) => DOMAIN_PATTERN.test(domain));
+        const result: Record<string, string | null> = {};
+        const missing: string[] = [];
+        for (const domain of domains) {
+          const cached = iconCache.get(domain);
+          if (cached && now - cached.at < ICON_CACHE_TTL_MS) result[domain] = cached.icon;
+          else missing.push(domain);
+        }
+        const fetched = yield* Effect.promise(() => Promise.all(missing.map(fetchIcon)));
+        missing.forEach((domain, index) => {
+          const icon = fetched[index] ?? null;
+          iconCache.set(domain, { at: now, icon });
+          result[domain] = icon;
+        });
+        return { icons: result };
       });
 
     return McpConnectorService.of({
@@ -624,6 +939,12 @@ export const make = (options: McpConnectorServiceOptions = {}) =>
       startOAuth,
       completeOAuth,
       disconnectOAuth,
+      importAll,
+      install,
+      test: (input) => checkConnector(input.connectorId),
+      runtimes,
+      icons,
+      searchRegistry,
     });
   });
 

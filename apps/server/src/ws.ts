@@ -2888,6 +2888,32 @@ const makeWsRpcLayer = (
             mcpConnectors.disconnectOAuth(input).pipe(Effect.as({})),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.mcpConnectorsImportAll]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpConnectorsImportAll, mcpConnectors.importAll(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.mcpConnectorsInstall]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpConnectorsInstall, mcpConnectors.install(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.mcpConnectorsTest]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpConnectorsTest, mcpConnectors.test(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.mcpConnectorsRuntimes]: (_input) =>
+          observeRpcEffect(WS_METHODS.mcpConnectorsRuntimes, mcpConnectors.runtimes, {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.mcpConnectorsIcons]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpConnectorsIcons, mcpConnectors.icons(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.mcpConnectorsSearchRegistry]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpConnectorsSearchRegistry,
+            mcpConnectors.searchRegistry(input),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverGetTraceDiagnostics,

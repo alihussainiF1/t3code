@@ -19,6 +19,7 @@ import {
   T3_BUILT_IN_MCP_SERVER_NAME,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
+import { parse as parseToml } from "smol-toml";
 
 export interface ResolvedMcpKeyValue {
   readonly name: string;
@@ -75,51 +76,59 @@ export function resolveMcpConnectors(input: ResolveMcpConnectorsInput): {
     const id = rawId as McpConnectorId;
     if (!config.enabled || disabled.has(id)) continue;
     if (config.providers !== undefined && !config.providers.includes(input.provider)) continue;
-    if (id === T3_BUILT_IN_MCP_SERVER_NAME) {
-      skipped.push({ id, reason: `"${id}" is reserved for T3's built-in tools.` });
-      continue;
-    }
-    const transport = config.transport;
-    if (transport.type === "stdio") {
-      connectors.push({
-        id,
-        name: config.name,
-        type: "stdio",
-        command: transport.command,
-        args: transport.args,
-        env: transport.env.map(({ name, value, secret }) => ({ name, value, secret })),
-      });
-      continue;
-    }
-    const headers = transport.headers.map(({ name, value, secret }) => ({ name, value, secret }));
-    let bearerToken: string | undefined;
-    if (transport.auth.type === "bearer") {
-      if (transport.auth.token.length === 0) {
-        skipped.push({ id, reason: "No bearer token is saved." });
-        continue;
-      }
-      bearerToken = transport.auth.token;
-    } else if (transport.auth.type === "oauth") {
-      bearerToken = input.oauthAccessTokens[id];
-      if (!bearerToken) {
-        skipped.push({ id, reason: "Not connected. Connect it in Settings > Connectors." });
-        continue;
-      }
-    }
-    connectors.push({
-      id,
-      name: config.name,
-      type: "http",
-      url: transport.url,
-      // An explicit Authorization header would fight the bearer token.
-      headers:
-        bearerToken === undefined
-          ? headers
-          : headers.filter((header) => header.name.toLowerCase() !== "authorization"),
-      ...(bearerToken !== undefined ? { bearerToken } : {}),
-    });
+    const resolved = resolveMcpConnector(id, config, input.oauthAccessTokens[id]);
+    if ("reason" in resolved) skipped.push(resolved);
+    else connectors.push(resolved);
   }
   return { connectors, skipped };
+}
+
+/**
+ * One connector with its credentials applied, or why it cannot be used
+ * (a reserved id, a missing bearer token, an OAuth connector without a token).
+ */
+export function resolveMcpConnector(
+  id: McpConnectorId,
+  config: McpConnectorConfig,
+  oauthAccessToken: string | undefined,
+): ResolvedMcpConnector | McpConnectorSkip {
+  if (id === T3_BUILT_IN_MCP_SERVER_NAME) {
+    return { id, reason: `"${id}" is reserved for T3's built-in tools.` };
+  }
+  const transport = config.transport;
+  if (transport.type === "stdio") {
+    return {
+      id,
+      name: config.name,
+      type: "stdio",
+      command: transport.command,
+      args: transport.args,
+      env: transport.env.map(({ name, value, secret }) => ({ name, value, secret })),
+    };
+  }
+  const headers = transport.headers.map(({ name, value, secret }) => ({ name, value, secret }));
+  let bearerToken: string | undefined;
+  if (transport.auth.type === "bearer") {
+    if (transport.auth.token.length === 0) return { id, reason: "No bearer token is saved." };
+    bearerToken = transport.auth.token;
+  } else if (transport.auth.type === "oauth") {
+    bearerToken = oauthAccessToken;
+    if (!bearerToken) {
+      return { id, reason: "Not connected. Connect it in Settings > Connectors." };
+    }
+  }
+  return {
+    id,
+    name: config.name,
+    type: "http",
+    url: transport.url,
+    // An explicit Authorization header would fight the bearer token.
+    headers:
+      bearerToken === undefined
+        ? headers
+        : headers.filter((header) => header.name.toLowerCase() !== "authorization"),
+    ...(bearerToken !== undefined ? { bearerToken } : {}),
+  };
 }
 
 function httpHeaderEntries(connector: Extract<ResolvedMcpConnector, { type: "http" }>) {
@@ -217,6 +226,42 @@ export function toCodexMcpConfig(connectors: ReadonlyArray<ResolvedMcpConnector>
     }
   });
   return { args, env, warnings };
+}
+
+/** Server names under `[mcp_servers]` in a Codex `config.toml`; empty when it does not parse. */
+export function codexConfiguredMcpServerNames(tomlText: string): ReadonlyArray<string> {
+  try {
+    const servers = (parseToml(tomlText) as Record<string, unknown>).mcp_servers;
+    return servers !== null && typeof servers === "object" && !Array.isArray(servers)
+      ? Object.keys(servers)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Keeps Codex from loading MCP servers from its own config, so T3's
+ * connectors are the only ones: `-c mcp_servers.<name>.enabled=false` for
+ * every configured server T3 does not itself set. Codex's `-c` parser splits
+ * keys on dots, so names it cannot address are returned instead of guessed.
+ */
+export function toCodexMcpDisableArgs(
+  configuredNames: ReadonlyArray<string>,
+  t3ServerIds: ReadonlyArray<string>,
+): { readonly args: ReadonlyArray<string>; readonly unaddressable: ReadonlyArray<string> } {
+  const keep = new Set(t3ServerIds);
+  const args: string[] = [];
+  const unaddressable: string[] = [];
+  for (const name of new Set(configuredNames)) {
+    if (keep.has(name)) continue;
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+      unaddressable.push(name);
+      continue;
+    }
+    args.push("-c", `mcp_servers.${name}.enabled=false`);
+  }
+  return { args, unaddressable };
 }
 
 // ── Claude Agent SDK ────────────────────────────────────────────────────

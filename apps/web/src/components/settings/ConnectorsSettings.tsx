@@ -8,10 +8,11 @@
 import type {
   DiscoveredMcpServer,
   EnvironmentId,
+  McpConnectorCheck,
   McpConnectorConfig,
   McpConnectorId,
 } from "@t3tools/contracts";
-import { PlusIcon } from "lucide-react";
+import { InfoIcon, PlusIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { isElectron } from "../../env";
@@ -33,20 +34,24 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ConnectorCatalogSection } from "./ConnectorCatalog";
 import { ConnectorDialog } from "./ConnectorDialog";
 import {
-  connectorIdFromName,
+  connectorCheckLabel,
   connectorProvidersSummary,
   connectorStatus,
   connectorTransportSummary,
+  DISCOVERY_SOURCE_LABELS,
   discoveredServerImportState,
   groupDiscoveredServers,
+  importableDiscoveredServers,
 } from "./ConnectorsSettings.logic";
 import {
   type ProviderOperateAccess,
@@ -172,14 +177,36 @@ function EnvironmentConnectors({
   >(null);
   const entries = Object.entries(connectors) as Array<[McpConnectorId, McpConnectorConfig]>;
 
+  const installConnector = useAtomCommand(serverEnvironment.installMcpConnector, {
+    label: "add connector",
+  });
   const saveConnector = (id: McpConnectorId | null, config: McpConnectorConfig) => {
-    const connectorId = id ?? connectorIdFromName(config.name, Object.keys(connectors));
+    if (id === null) {
+      // New connectors are added and checked by the server in one step.
+      void installConnector({ environmentId, input: { config } }).then((result) => {
+        if (result._tag === "Success" && result.value.check.status === "error") {
+          toastManager.add({
+            type: "error",
+            title: `${config.name} was added but is not working yet`,
+            description: result.value.check.message ?? "Use Test to check it again.",
+          });
+        }
+      });
+      return;
+    }
     // The patch names only this entry; the server merges it into its map.
-    updateSettings({ mcpConnectors: { [connectorId]: config } });
+    updateSettings({ mcpConnectors: { [id]: config } });
   };
 
   return (
     <>
+      <ProviderConfigsBanner environmentId={environmentId} cwd={cwd} readOnly={readOnly} />
+      <ConnectorCatalogSection
+        environmentId={environmentId}
+        environmentLabel={environment.label}
+        connectors={connectors}
+        readOnly={readOnly}
+      />
       <SettingsSection
         {...searchableSetting("mcp-connectors")}
         headerAction={
@@ -268,21 +295,25 @@ function ConnectorRow({
         </span>
       }
       status={
-        status.kind === "ready" ? null : status.kind === "missing-token" ? (
-          <Badge variant="warning">Missing token</Badge>
-        ) : (
-          <OAuthStatus
-            environmentId={environmentId}
-            id={id}
-            connectedAt={status.kind === "oauth-connected" ? status.connectedAt : null}
-            readOnly={readOnly}
-          />
-        )
+        <span className="flex flex-wrap items-center gap-2">
+          {config.enabled ? <CheckBadge check={config.lastCheck} /> : null}
+          {status.kind === "ready" ? null : status.kind === "missing-token" ? (
+            <Badge variant="warning">Missing token</Badge>
+          ) : (
+            <OAuthStatus
+              environmentId={environmentId}
+              id={id}
+              connectedAt={status.kind === "oauth-connected" ? status.connectedAt : null}
+              readOnly={readOnly}
+            />
+          )}
+        </span>
       }
       control={
         <>
           {!readOnly ? (
             <>
+              <TestConnectorButton environmentId={environmentId} id={id} />
               <Button size="xs" variant="ghost" onClick={onEdit}>
                 Edit
               </Button>
@@ -438,6 +469,126 @@ function DeleteConnectorButton({
   );
 }
 
+/** The server's last "does it work" check, with its reason on hover. */
+function CheckBadge({ check }: { readonly check: McpConnectorCheck | undefined }) {
+  if (!check) return null;
+  const badge = (
+    <Badge variant={check.status === "connected" ? "success" : "warning"}>
+      {connectorCheckLabel(check)}
+    </Badge>
+  );
+  return check.message ? (
+    <Tooltip>
+      <TooltipTrigger render={badge} />
+      <TooltipPopup side="top">{check.message}</TooltipPopup>
+    </Tooltip>
+  ) : (
+    badge
+  );
+}
+
+function TestConnectorButton({
+  environmentId,
+  id,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly id: McpConnectorId;
+}) {
+  const test = useAtomCommand(serverEnvironment.testMcpConnector, { label: "check connector" });
+  const [pending, setPending] = useState(false);
+  return (
+    <Button
+      size="xs"
+      variant="ghost"
+      disabled={pending}
+      onClick={() => {
+        setPending(true);
+        void test({ environmentId, input: { connectorId: id } }).finally(() => setPending(false));
+      }}
+    >
+      {pending ? "Testing…" : "Test"}
+    </Button>
+  );
+}
+
+/**
+ * T3 hands agents only its own connectors, so servers still configured in a
+ * provider CLI would silently stop loading. This offers to bring them over.
+ */
+function ProviderConfigsBanner({
+  environmentId,
+  cwd,
+  readOnly,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string | null;
+  readonly readOnly: boolean;
+}) {
+  const loadProviderConfigs = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.mcpConnectorsLoadProviderConfigs,
+  );
+  const discovery = useEnvironmentQuery(
+    serverEnvironment.discoverMcpConnectors({ environmentId, input: cwd ? { cwd } : {} }),
+  );
+  const importAll = useAtomCommand(serverEnvironment.importAllMcpConnectors, {
+    label: "import MCP servers",
+  });
+  const [dismissed, setDismissed] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const importable = useMemo(
+    () => importableDiscoveredServers(discovery.data?.servers ?? EMPTY_DISCOVERED),
+    [discovery.data],
+  );
+  if (readOnly || dismissed || loadProviderConfigs || importable.length === 0) return null;
+  const sources = [
+    ...new Set(importable.map((server) => DISCOVERY_SOURCE_LABELS[server.source].split(" (")[0])),
+  ];
+  const count = importable.length;
+  return (
+    <Alert variant="info">
+      <InfoIcon />
+      <AlertTitle>
+        We found {count} MCP {count === 1 ? "server" : "servers"} in your {sources.join(" and ")}{" "}
+        config
+      </AlertTitle>
+      <AlertDescription>
+        Agents in T3 Code use only the connectors on this page. Import them to keep using them;
+        secrets move into this environment's secret store.
+      </AlertDescription>
+      <AlertAction>
+        <Button size="xs" variant="ghost" onClick={() => setDismissed(true)}>
+          Not now
+        </Button>
+        <Button
+          size="xs"
+          disabled={importing}
+          onClick={() => {
+            setImporting(true);
+            void importAll({ environmentId, input: cwd ? { cwd } : {} })
+              .then((result) => {
+                if (result._tag !== "Success") return;
+                discovery.refresh();
+                const { imported, skipped } = result.value;
+                toastManager.add({
+                  type: skipped.length > 0 ? "warning" : "success",
+                  title: `Imported ${imported.length} ${imported.length === 1 ? "server" : "servers"}`,
+                  description:
+                    skipped.length > 0
+                      ? `Not imported: ${skipped.map(({ name, reason }) => `${name} (${reason})`).join("; ")}`
+                      : "Each one is being checked now.",
+                });
+              })
+              .finally(() => setImporting(false));
+          }}
+        >
+          {importing ? "Importing…" : "Import all"}
+        </Button>
+      </AlertAction>
+    </Alert>
+  );
+}
+
 /** MCP servers already configured in the provider CLIs on this environment, ready to adopt. */
 function ImportConnectorsSection({
   environmentId,
@@ -457,6 +608,11 @@ function ImportConnectorsSection({
   const importConnector = useAtomCommand(serverEnvironment.importMcpConnector, {
     label: "import connector",
   });
+  const loadProviderConfigs = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.mcpConnectorsLoadProviderConfigs,
+  );
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [importing, setImporting] = useState<string | null>(null);
   const groups = useMemo(
     () => groupDiscoveredServers(discovery.data?.servers ?? EMPTY_DISCOVERED),
@@ -499,6 +655,20 @@ function ImportConnectorsSection({
         </Tooltip>
       }
     >
+      <SettingsRow
+        title="Also load MCP servers from each agent's own config"
+        description="Off: agents get only the connectors above. On: Codex, Claude, and OpenCode also load the servers listed here from their own configs. New sessions follow the change."
+        control={
+          <Switch
+            aria-label="Also load MCP servers from each agent's own config"
+            checked={loadProviderConfigs}
+            disabled={readOnly}
+            onCheckedChange={(checked) =>
+              updateSettings({ mcpConnectorsLoadProviderConfigs: checked })
+            }
+          />
+        }
+      />
       {discovery.error ? (
         <SettingsRow title="Could not scan for MCP servers." description={discovery.error} />
       ) : groups.length === 0 ? (

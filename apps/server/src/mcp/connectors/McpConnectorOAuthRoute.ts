@@ -57,12 +57,18 @@ export const mcpConnectorOAuthRouteLayer = HttpRouter.add(
         ...(errorDescription ? { errorDescription } : {}),
       })
       .pipe(
-        Effect.map((name) =>
-          page(
-            `Connected ${name}`,
-            "You can close this window and return to T3 Code. New threads get this connector's tools.",
-            200,
-          ),
+        Effect.map(({ name, check }) =>
+          check?.status === "connected"
+            ? page(
+                `Connected ${name}`,
+                `${check.toolCount ?? 0} tools are ready. You can close this window and return to T3 Code; new threads get them.`,
+                200,
+              )
+            : page(
+                `Signed in to ${name}`,
+                `T3 Code could not use the connection yet${check?.message ? `: ${check.message}` : "."} Use Test in Settings > Connectors to try again.`,
+                200,
+              ),
         ),
         Effect.catch((failure) =>
           Effect.logWarning("MCP connector sign-in failed", {

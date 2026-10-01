@@ -47,8 +47,17 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
-import { toCodexMcpConfig } from "../../mcp/connectors/McpConnectorTranslators.ts";
+import {
+  codexConfiguredMcpServerNames,
+  toCodexMcpConfig,
+  toCodexMcpDisableArgs,
+} from "../../mcp/connectors/McpConnectorTranslators.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
+import * as NodeOS from "node:os";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
 import {
   ProviderAdapterRequestError,
@@ -2235,6 +2244,34 @@ function mapToRuntimeEvents(
 }
 
 /**
+ * MCP server names Codex would load from its own config: the Codex home's
+ * `config.toml` and the project's `.codex/config.toml`. Unreadable files
+ * contribute nothing.
+ */
+const readCodexConfiguredMcpServers = (input: {
+  readonly homePath: string | undefined;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly cwd: string;
+}) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
+    const path = yield* Effect.serviceOption(Path.Path);
+    if (Option.isNone(fileSystem) || Option.isNone(path)) return [];
+    const home = input.homePath?.trim()
+      ? expandHomePath(input.homePath)
+      : input.environment.CODEX_HOME?.trim() || path.value.join(NodeOS.homedir(), ".codex");
+    const names: string[] = [];
+    for (const file of [
+      path.value.join(home, "config.toml"),
+      path.value.join(input.cwd, ".codex", "config.toml"),
+    ]) {
+      const text = yield* fileSystem.value.readFileString(file).pipe(Effect.option);
+      if (Option.isSome(text)) names.push(...codexConfiguredMcpServerNames(text.value));
+    }
+    return names;
+  });
+
+/**
  * Build a Codex provider adapter bound to a specific `CodexSettings` payload.
  *
  * The adapter is a captured closure over `codexConfig` — the `binaryPath` and
@@ -2310,11 +2347,31 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         for (const warning of connectorConfig.warnings) {
           yield* Effect.logWarning(warning, { threadId: input.threadId });
         }
+        const cwd = input.cwd ?? process.cwd();
+        const ownServers = !McpProviderSession.readMcpExclusive(input.threadId)
+          ? { args: [], unaddressable: [] }
+          : toCodexMcpDisableArgs(
+              yield* readCodexConfiguredMcpServers({
+                homePath: effectiveConfig.homePath,
+                environment: effectiveEnvironment ?? process.env,
+                cwd,
+              }),
+              [
+                "t3-code",
+                ...McpProviderSession.readMcpConnectors(input.threadId).map(({ id }) => id),
+              ],
+            );
+        if (ownServers.unaddressable.length > 0) {
+          yield* Effect.logWarning("Codex MCP servers T3 cannot turn off by name", {
+            threadId: input.threadId,
+            servers: ownServers.unaddressable,
+          });
+        }
         const hasConnectors = connectorConfig.args.length > 0;
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
-          cwd: input.cwd ?? process.cwd(),
+          cwd,
           ...(options?.models ? { models: options.models } : {}),
           binaryPath: effectiveConfig.binaryPath,
           launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, effectiveEnvironment),
@@ -2355,10 +2412,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                       ]
                     : []),
                   ...connectorConfig.args,
+                  ...ownServers.args,
                 ],
                 ...(mcpSession ? { mcpCapabilities: mcpSession.capabilities } : {}),
               }
-            : {}),
+            : ownServers.args.length > 0
+              ? { appServerArgs: ownServers.args }
+              : {}),
         };
         const turnTokenUsage = makeCodexTurnTokenUsageState();
         // Codex reports a usage-limit stop as OpenAI's own sentence, which on a

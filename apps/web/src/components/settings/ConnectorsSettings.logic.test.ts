@@ -1,12 +1,17 @@
-import type { McpConnectorConfig } from "@t3tools/contracts";
+import { BUILT_IN_MCP_CATALOG, type McpConnectorConfig, McpConnectorId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   REDACTED_SECRET,
   buildConnectorConfig,
+  catalogTileState,
+  connectorCheckLabel,
   connectorFormFromConfig,
   connectorIdFromName,
   connectorStatus,
+  filterCatalog,
+  importableDiscoveredServers,
+  registryEntriesToShow,
   newKeyValueRow,
   parseArgsText,
   setRowSecret,
@@ -121,5 +126,79 @@ describe("connectorStatus", () => {
     expect(
       connectorStatus(http({ type: "oauth", scopes: "", clientId: "", connectedAt: null })),
     ).toEqual({ kind: "oauth-disconnected" });
+  });
+});
+
+describe("catalog", () => {
+  const linear = BUILT_IN_MCP_CATALOG.find((entry) => entry.id === "builtin:linear")!;
+  const imported: McpConnectorConfig = {
+    name: "linear-from-codex",
+    enabled: true,
+    transport: {
+      type: "http",
+      url: "https://mcp.linear.app/mcp/",
+      headers: [],
+      auth: { type: "oauth", scopes: "", clientId: "", connectedAt: null },
+    },
+    lastCheck: { status: "needs-auth", message: "Sign in", checkedAt: "2026-10-01T00:00:00Z" },
+  };
+
+  it("shows a tile as added when a connector came from it or points at the same server", () => {
+    expect(catalogTileState(linear, {})).toEqual({ kind: "available" });
+    expect(catalogTileState(linear, { "linear-codex": imported })).toMatchObject({
+      kind: "added",
+      id: "linear-codex",
+      usesOAuth: true,
+      check: { status: "needs-auth" },
+    });
+    const { lastCheck: _lastCheck, ...unchecked } = imported;
+    expect(
+      catalogTileState(linear, {
+        other: {
+          ...unchecked,
+          catalogId: "builtin:linear",
+          transport: { type: "stdio", command: "x", args: [], env: [] },
+        },
+      }),
+    ).toMatchObject({ kind: "added", id: "other", check: undefined });
+  });
+
+  it("filters built-ins and drops registry duplicates of them", () => {
+    expect(filterCatalog(BUILT_IN_MCP_CATALOG, "line issues").map(({ id }) => id)).toContain(
+      "builtin:linear",
+    );
+    expect(filterCatalog(BUILT_IN_MCP_CATALOG, "")).toBe(BUILT_IN_MCP_CATALOG);
+    const duplicate = {
+      ...linear,
+      id: "registry:app.linear/linear",
+      source: "registry" as const,
+    };
+    expect(registryEntriesToShow([duplicate], BUILT_IN_MCP_CATALOG)).toEqual([]);
+  });
+
+  it("labels check results", () => {
+    expect(connectorCheckLabel(undefined)).toBe("Not checked");
+    expect(connectorCheckLabel({ status: "connected", toolCount: 1, checkedAt: "" })).toBe(
+      "Connected · 1 tool",
+    );
+    expect(connectorCheckLabel({ status: "error", checkedAt: "" })).toBe("Not working");
+  });
+
+  it("counts each importable discovered server once", () => {
+    const server = (name: string, source: "codex-config" | "claude-user", importedAs?: string) => ({
+      name,
+      source,
+      path: "/x",
+      connector: imported,
+      ...(importedAs ? { importedAs: McpConnectorId.make(importedAs) } : {}),
+    });
+    expect(
+      importableDiscoveredServers([
+        server("alpha", "codex-config"),
+        server("Alpha", "claude-user"),
+        server("beta", "codex-config", "beta"),
+        { ...server("gamma", "claude-user"), connector: null },
+      ]).map(({ name }) => name),
+    ).toEqual(["alpha"]);
   });
 });

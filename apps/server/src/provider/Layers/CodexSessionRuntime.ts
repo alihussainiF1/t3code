@@ -68,7 +68,12 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
 ];
 
 export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | undefined): boolean {
-  return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
+  // Overrides that only turn the user's own servers off add nothing to reload.
+  return (
+    appServerArgs?.some(
+      (argument) => argument.includes("mcp_servers.") && !argument.endsWith(".enabled=false"),
+    ) === true
+  );
 }
 
 function configuredMcpToolAvailability(

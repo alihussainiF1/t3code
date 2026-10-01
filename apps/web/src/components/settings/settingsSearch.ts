@@ -674,6 +674,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
   },
   {
+    id: "mcp-connectors-catalog",
+    title: "Add a connector",
+    to: "/settings/connectors",
+    searchTerms: [
+      "connector gallery catalog one click connect linear notion github sentry stripe playwright mcp registry",
+    ],
+    environmentOnly: true,
+  },
+  {
     id: "mcp-connectors-import",
     title: "Import MCP servers",
     to: "/settings/connectors",

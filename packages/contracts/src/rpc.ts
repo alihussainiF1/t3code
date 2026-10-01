@@ -33,7 +33,17 @@ import {
   McpConnectorOAuthDisconnectInput,
   McpConnectorOAuthStartInput,
   McpConnectorOAuthStartResult,
+  McpConnectorCheck,
+  McpConnectorIconsInput,
+  McpConnectorIconsResult,
+  McpConnectorImportAllInput,
+  McpConnectorImportAllResult,
+  McpConnectorInstallInput,
+  McpConnectorInstallResult,
+  McpConnectorRuntimes,
+  McpConnectorTestInput,
 } from "./mcpConnector.ts";
+import { McpRegistrySearchInput, McpRegistrySearchResult } from "./mcpConnectorCatalog.ts";
 import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
@@ -402,6 +412,12 @@ export const WS_METHODS = {
   mcpConnectorsImport: "mcpConnectors.import",
   mcpConnectorsOAuthStart: "mcpConnectors.oauthStart",
   mcpConnectorsOAuthDisconnect: "mcpConnectors.oauthDisconnect",
+  mcpConnectorsImportAll: "mcpConnectors.importAll",
+  mcpConnectorsInstall: "mcpConnectors.install",
+  mcpConnectorsTest: "mcpConnectors.test",
+  mcpConnectorsRuntimes: "mcpConnectors.runtimes",
+  mcpConnectorsIcons: "mcpConnectors.icons",
+  mcpConnectorsSearchRegistry: "mcpConnectors.searchRegistry",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetHostResources: "server.getHostResources",
@@ -667,6 +683,42 @@ const WsMcpConnectorsOAuthStartRpc = Rpc.make(WS_METHODS.mcpConnectorsOAuthStart
 const WsMcpConnectorsOAuthDisconnectRpc = Rpc.make(WS_METHODS.mcpConnectorsOAuthDisconnect, {
   payload: McpConnectorOAuthDisconnectInput,
   success: Schema.Struct({}),
+  error: Schema.Union([McpConnectorError, EnvironmentAuthorizationError]),
+});
+
+const WsMcpConnectorsImportAllRpc = Rpc.make(WS_METHODS.mcpConnectorsImportAll, {
+  payload: McpConnectorImportAllInput,
+  success: McpConnectorImportAllResult,
+  error: Schema.Union([McpConnectorError, EnvironmentAuthorizationError]),
+});
+
+const WsMcpConnectorsInstallRpc = Rpc.make(WS_METHODS.mcpConnectorsInstall, {
+  payload: McpConnectorInstallInput,
+  success: McpConnectorInstallResult,
+  error: Schema.Union([McpConnectorError, EnvironmentAuthorizationError]),
+});
+
+const WsMcpConnectorsTestRpc = Rpc.make(WS_METHODS.mcpConnectorsTest, {
+  payload: McpConnectorTestInput,
+  success: McpConnectorCheck,
+  error: Schema.Union([McpConnectorError, EnvironmentAuthorizationError]),
+});
+
+const WsMcpConnectorsRuntimesRpc = Rpc.make(WS_METHODS.mcpConnectorsRuntimes, {
+  payload: Schema.Struct({}),
+  success: McpConnectorRuntimes,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsMcpConnectorsIconsRpc = Rpc.make(WS_METHODS.mcpConnectorsIcons, {
+  payload: McpConnectorIconsInput,
+  success: McpConnectorIconsResult,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsMcpConnectorsSearchRegistryRpc = Rpc.make(WS_METHODS.mcpConnectorsSearchRegistry, {
+  payload: McpRegistrySearchInput,
+  success: McpRegistrySearchResult,
   error: Schema.Union([McpConnectorError, EnvironmentAuthorizationError]),
 });
 
@@ -1506,6 +1558,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsMcpConnectorsImportRpc,
   WsMcpConnectorsOAuthStartRpc,
   WsMcpConnectorsOAuthDisconnectRpc,
+  WsMcpConnectorsImportAllRpc,
+  WsMcpConnectorsInstallRpc,
+  WsMcpConnectorsTestRpc,
+  WsMcpConnectorsRuntimesRpc,
+  WsMcpConnectorsIconsRpc,
+  WsMcpConnectorsSearchRegistryRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,
