@@ -35,6 +35,7 @@ import {
   ThreadPullRequestSnapshot,
   ThreadPullRequestStack,
   type ThreadPullRequestLink,
+  McpConnectorId,
 } from "@t3tools/contracts";
 import { legacyLinkedPullRequestOf } from "@t3tools/shared/threadPullRequests";
 import * as Arr from "effect/Array";
@@ -132,6 +133,7 @@ const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
     titleState: Schema.NullOr(Schema.fromJsonString(ThreadTitleState)),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     branchPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
+    disabledMcpConnectorIds: Schema.NullOr(Schema.fromJsonString(Schema.Array(McpConnectorId))),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -368,6 +370,13 @@ function mapLatestTurn(
   };
 }
 
+// Omitted when every connector is enabled to keep thread payloads small.
+function mapDisabledMcpConnectorIds(row: Schema.Schema.Type<typeof ProjectionThreadDbRowSchema>) {
+  return row.disabledMcpConnectorIds != null && row.disabledMcpConnectorIds.length > 0
+    ? { disabledMcpConnectorIds: row.disabledMcpConnectorIds }
+    : {};
+}
+
 function mapTitleRegeneration(row: Schema.Schema.Type<typeof ProjectionThreadDbRowSchema>) {
   return row.titleRegenerationRequestId != null && row.titleRegenerationStartedAt != null
     ? {
@@ -589,6 +598,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
           auto_settle_disabled_at AS "autoSettleDisabledAt",
+          disabled_mcp_connector_ids_json AS "disabledMcpConnectorIds",
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
@@ -637,6 +647,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
           auto_settle_disabled_at AS "autoSettleDisabledAt",
+          disabled_mcp_connector_ids_json AS "disabledMcpConnectorIds",
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
@@ -712,6 +723,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
           auto_settle_disabled_at AS "autoSettleDisabledAt",
+          disabled_mcp_connector_ids_json AS "disabledMcpConnectorIds",
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
@@ -1316,6 +1328,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
           auto_settle_disabled_at AS "autoSettleDisabledAt",
+          disabled_mcp_connector_ids_json AS "disabledMcpConnectorIds",
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
@@ -2426,6 +2439,7 @@ pending_approval_requests AS (
                 pinOrderKey: row.pinOrderKey ?? null,
                 activeOrderKey: row.activeOrderKey ?? null,
                 autoSettleDisabledAt: row.autoSettleDisabledAt ?? null,
+                ...mapDisabledMcpConnectorIds(row),
                 titleRegeneration: mapTitleRegeneration(row),
                 titleState: row.titleState,
                 deletedAt: row.deletedAt,
@@ -2672,6 +2686,7 @@ pending_approval_requests AS (
                   pinOrderKey: row.pinOrderKey ?? null,
                   activeOrderKey: row.activeOrderKey ?? null,
                   autoSettleDisabledAt: row.autoSettleDisabledAt ?? null,
+                  ...mapDisabledMcpConnectorIds(row),
                   titleRegeneration: mapTitleRegeneration(row),
                   titleState: row.titleState,
                   deletedAt: row.deletedAt,
@@ -2833,6 +2848,7 @@ pending_approval_requests AS (
                         pinOrderKey: row.pinOrderKey ?? null,
                         activeOrderKey: row.activeOrderKey ?? null,
                         autoSettleDisabledAt: row.autoSettleDisabledAt ?? null,
+                        ...mapDisabledMcpConnectorIds(row),
                         titleRegeneration: mapTitleRegeneration(row),
                         titleState: row.titleState,
                         session: sessionByThread.get(row.threadId) ?? null,
@@ -3019,6 +3035,7 @@ pending_approval_requests AS (
                   pinOrderKey: row.pinOrderKey ?? null,
                   activeOrderKey: row.activeOrderKey ?? null,
                   autoSettleDisabledAt: row.autoSettleDisabledAt ?? null,
+                  ...mapDisabledMcpConnectorIds(row),
                   titleRegeneration: mapTitleRegeneration(row),
                   titleState: row.titleState,
                   session: sessionByThread.get(row.threadId) ?? null,
@@ -3368,6 +3385,7 @@ pending_approval_requests AS (
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         activeOrderKey: threadRow.value.activeOrderKey ?? null,
         autoSettleDisabledAt: threadRow.value.autoSettleDisabledAt ?? null,
+        ...mapDisabledMcpConnectorIds(threadRow.value),
         titleRegeneration: mapTitleRegeneration(threadRow.value),
         titleState: threadRow.value.titleState,
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
@@ -3670,6 +3688,7 @@ pending_approval_requests AS (
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         activeOrderKey: threadRow.value.activeOrderKey ?? null,
         autoSettleDisabledAt: threadRow.value.autoSettleDisabledAt ?? null,
+        ...mapDisabledMcpConnectorIds(threadRow.value),
         titleRegeneration: mapTitleRegeneration(threadRow.value),
         titleState: threadRow.value.titleState,
         deletedAt: null,

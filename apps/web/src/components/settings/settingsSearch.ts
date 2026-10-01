@@ -19,6 +19,7 @@ export type SettingsPath =
   | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/integrations"
+  | "/settings/connectors"
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
@@ -90,6 +91,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
+  "/settings/connectors": "Connectors",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
@@ -663,6 +665,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["agent opens browser device simulator pop into view hide"],
   },
   {
+    id: "mcp-connectors",
+    title: "MCP connectors",
+    to: "/settings/connectors",
+    searchTerms: [
+      "mcp servers model context protocol tools add remote url stdio command oauth bearer token every provider",
+    ],
+    environmentOnly: true,
+  },
+  {
+    id: "mcp-connectors-import",
+    title: "Import MCP servers",
+    to: "/settings/connectors",
+    searchTerms: ["codex config toml claude code mcp.json existing servers discover"],
+    environmentOnly: true,
+  },
+  {
     id: "automatic-pull",
     title: "Automatically pull",
     to: "/settings/source-control",
@@ -849,6 +867,8 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/keybindings": null,
   "/settings/providers": null,
   "/settings/integrations": null,
+  // Connectors are machine state like providers: one environment at a time.
+  "/settings/connectors": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",

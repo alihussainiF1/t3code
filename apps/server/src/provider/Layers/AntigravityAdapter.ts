@@ -37,6 +37,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { ServerConfig } from "../../config.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { toAcpMcpServers } from "../../mcp/connectors/McpConnectorTranslators.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { AntigravityAuth } from "../AntigravityAuth.ts";
 import {
@@ -798,6 +799,9 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                   : {}),
                 additionalDirectories: [serverConfig.attachmentsDir],
                 ...(Option.isSome(cursor) ? { resumeSessionId: cursor.value.sessionId } : {}),
+                connectorMcpServers: toAcpMcpServers(
+                  McpProviderSession.readMcpConnectors(input.threadId),
+                ),
                 mcpServers: mcp
                   ? [
                       {

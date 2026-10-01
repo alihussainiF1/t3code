@@ -1,4 +1,5 @@
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type { ResolvedMcpConnector } from "./connectors/McpConnectorTranslators.ts";
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
@@ -46,8 +47,29 @@ export function readMcpProviderSession(threadId: ThreadId): McpProviderSessionCo
 
 export function clearMcpProviderSession(threadId: ThreadId): void {
   sessionsByThread.delete(threadId);
+  connectorsByThread.delete(threadId);
 }
 
 export function clearAllMcpProviderSessions(): void {
   sessionsByThread.clear();
+  connectorsByThread.clear();
+}
+
+/**
+ * User-configured MCP connectors resolved for the thread's next provider
+ * session, with secrets materialized. Set independently of the `t3-code`
+ * credential: connectors still attach when agent browser/device access is off.
+ */
+const connectorsByThread = new Map<ThreadId, ReadonlyArray<ResolvedMcpConnector>>();
+
+export function setMcpConnectors(
+  threadId: ThreadId,
+  connectors: ReadonlyArray<ResolvedMcpConnector>,
+): void {
+  if (connectors.length === 0) connectorsByThread.delete(threadId);
+  else connectorsByThread.set(threadId, connectors);
+}
+
+export function readMcpConnectors(threadId: ThreadId): ReadonlyArray<ResolvedMcpConnector> {
+  return connectorsByThread.get(threadId) ?? [];
 }

@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, McpConnectorConfig, McpConnectorId } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
 /**
@@ -17,6 +17,9 @@ export type ThreadActionMenuId =
   | "auto-settle"
   | "auto-settle:enabled"
   | "auto-settle:disabled"
+  | "mcp-connectors"
+  | "mcp-connectors:hint"
+  | `mcp-connector:${string}`
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
@@ -59,6 +62,51 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  /**
+   * Connectors enabled on the thread's environment, checked unless this
+   * thread turned them off. Null hides the submenu (older server).
+   */
+  readonly mcpConnectors: ReadonlyArray<ThreadMcpConnectorOption> | null;
+}
+
+export interface ThreadMcpConnectorOption {
+  readonly id: McpConnectorId;
+  readonly name: string;
+  readonly enabledForThread: boolean;
+}
+
+const MCP_CONNECTOR_ACTION_PREFIX = "mcp-connector:";
+
+/** The environment's enabled connectors with this thread's opt-outs applied, by name. */
+export function listThreadMcpConnectors(
+  connectors: Readonly<Record<McpConnectorId, McpConnectorConfig>>,
+  disabledIds: ReadonlyArray<McpConnectorId> | undefined,
+): ThreadMcpConnectorOption[] {
+  const disabled = new Set(disabledIds ?? []);
+  return (Object.entries(connectors) as Array<[McpConnectorId, McpConnectorConfig]>)
+    .filter(([, config]) => config.enabled)
+    .map(([id, config]) => ({ id, name: config.name, enabledForThread: !disabled.has(id) }))
+    .toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+/** The connector a menu action toggles, or null for any other action. */
+export function mcpConnectorIdFromMenuAction(action: ThreadActionMenuId): McpConnectorId | null {
+  return action.startsWith(MCP_CONNECTOR_ACTION_PREFIX)
+    ? (action.slice(MCP_CONNECTOR_ACTION_PREFIX.length) as McpConnectorId)
+    : null;
+}
+
+/**
+ * The thread's full disabled set after toggling one connector. Ids of
+ * connectors that are off environment-wide stay in the set, so turning one
+ * back on there restores this thread's choice.
+ */
+export function toggleThreadMcpConnector(
+  disabledIds: ReadonlyArray<McpConnectorId> | undefined,
+  id: McpConnectorId,
+): McpConnectorId[] {
+  const current = disabledIds ?? [];
+  return current.includes(id) ? current.filter((candidate) => candidate !== id) : [...current, id];
 }
 
 /**
@@ -158,6 +206,31 @@ export function buildThreadActionMenuItems(
                 id: "auto-settle:disabled" as const,
                 label: "Disabled",
                 checked: !state.autoSettleEnabled,
+              },
+            ],
+          },
+        ]
+      : []),
+    // Shown only with at least one connector to toggle. Providers read the
+    // set when a session starts; the server restarts the session on the
+    // thread's next turn after a change.
+    ...(state.mcpConnectors !== null && state.mcpConnectors.length > 0
+      ? [
+          {
+            id: "mcp-connectors" as const,
+            label: "Connectors",
+            icon: "plug",
+            children: [
+              ...state.mcpConnectors.map((connector) => ({
+                id: `${MCP_CONNECTOR_ACTION_PREFIX}${connector.id}` as const,
+                label: connector.name,
+                checked: connector.enabledForThread,
+              })),
+              {
+                id: "mcp-connectors:hint" as const,
+                label: "Applies from the next message",
+                disabled: true,
+                separatorBefore: true,
               },
             ],
           },

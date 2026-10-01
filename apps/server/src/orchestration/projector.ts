@@ -43,6 +43,7 @@ import {
   ThreadPinnedPayload,
   ThreadPinReorderedPayload,
   ThreadAutoSettleSetPayload,
+  ThreadMcpConnectorsSetPayload,
   ThreadPullRequestLinkedPayload,
   ThreadPullRequestSyncedPayload,
   ThreadPullRequestUnlinkedPayload,
@@ -602,6 +603,22 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             autoSettleDisabledAt: payload.autoSettleDisabledAt,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.mcp-connectors-set":
+      return decodeForEvent(
+        ThreadMcpConnectorsSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            disabledMcpConnectorIds: payload.disabledMcpConnectorIds,
             updatedAt: payload.updatedAt,
           }),
         })),

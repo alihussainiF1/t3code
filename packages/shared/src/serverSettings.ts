@@ -277,6 +277,7 @@ export function applyServerSettingsPatch(
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
+    mcpConnectors: mcpConnectorsPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
     // Already translated into `projectSettingsOverrides` above; the legacy
@@ -390,6 +391,9 @@ export function applyServerSettingsPatch(
             usagePriceOverridesPatch,
           ),
         }
+      : {}),
+    ...(mcpConnectorsPatch !== undefined
+      ? { mcpConnectors: mergeSettingsEntries(current.mcpConnectors, mcpConnectorsPatch) }
       : {}),
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }

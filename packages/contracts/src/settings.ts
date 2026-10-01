@@ -12,6 +12,7 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
+import { McpConnectorConfig, McpConnectorId } from "./mcpConnector.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
@@ -1314,6 +1315,14 @@ export const ServerSettings = Schema.Struct({
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /**
+   * MCP servers attached to every provider session on this environment,
+   * keyed by a stable id. Secret values live in the server secret store and
+   * appear here only as a redaction marker. Threads can opt out per connector.
+   */
+  mcpConnectors: Schema.Record(McpConnectorId, McpConnectorConfig).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -1595,6 +1604,14 @@ export const ServerSettingsPatch = Schema.Struct({
   /** Each entry replaces one model's rates; `null` restores automatic pricing. */
   usagePriceOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(UsageModelPriceOverride)),
+  ),
+  /**
+   * Per-entry replacement like `usageLimitSources`: each entry replaces one
+   * connector and `null` removes it (with its stored secrets). Secret values
+   * sent back as the redaction marker keep what the server has.
+   */
+  mcpConnectors: Schema.optionalKey(
+    Schema.Record(McpConnectorId, Schema.NullOr(McpConnectorConfig)),
   ),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;

@@ -88,6 +88,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { toClaudeMcpServers } from "../../mcp/connectors/McpConnectorTranslators.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { claudeSignedOutMessage, makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
@@ -4932,6 +4933,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         extraArgs["thinking-display"] = "summarized";
       }
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+      const connectorServers = toClaudeMcpServers(
+        McpProviderSession.readMcpConnectors(input.threadId),
+      );
+      const mcpServers = {
+        ...connectorServers.servers,
+        ...(mcpSession
+          ? {
+              "t3-code": {
+                type: "http" as const,
+                url: mcpSession.endpoint,
+                headers: {
+                  Authorization: mcpSession.authorizationHeader,
+                },
+              },
+            }
+          : {}),
+      };
       // The attachments dir grant lets the agent Read/copy pasted images at
       // the paths ProviderService injects into the turn text, without an
       // approval prompt. It is a leaf directory holding only attachment
@@ -4977,22 +4995,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
-        env: McpProviderSession.withAgentDeviceEnvironment(claudeEnvironment, mcpSession),
+        // Connector secrets travel as env vars that `--mcp-config` references.
+        env: {
+          ...McpProviderSession.withAgentDeviceEnvironment(claudeEnvironment, mcpSession),
+          ...connectorServers.env,
+        },
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
-        ...(mcpSession
-          ? {
-              mcpServers: {
-                "t3-code": {
-                  type: "http",
-                  url: mcpSession.endpoint,
-                  headers: {
-                    Authorization: mcpSession.authorizationHeader,
-                  },
-                },
-              },
-            }
-          : {}),
+        ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
       };
 
       yield* Effect.annotateCurrentSpan({

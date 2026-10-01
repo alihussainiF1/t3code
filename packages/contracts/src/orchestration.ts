@@ -24,6 +24,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { McpConnectorId } from "./mcpConnector.ts";
 import {
   PullRequestActor,
   PullRequestChecksState,
@@ -842,6 +843,9 @@ export const OrchestrationThread = Schema.Struct({
   // Survives manual settle, un-settle, and activity: only the user clears it.
   // Optional so payloads from older servers still decode.
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  // MCP connectors the user turned off for this thread. Connectors not listed
+  // follow the environment setting. Optional so older servers still decode.
+  disabledMcpConnectorIds: Schema.optional(Schema.Array(McpConnectorId)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
@@ -913,6 +917,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  disabledMcpConnectorIds: Schema.optional(Schema.Array(McpConnectorId)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
   session: Schema.NullOr(OrchestrationSession),
@@ -1231,6 +1236,15 @@ const ThreadAutoSettleSetCommand = Schema.Struct({
   enabled: Schema.Boolean,
 });
 
+const ThreadMcpConnectorsSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.mcp-connectors.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  // The full set of connectors turned off for this thread; an empty list
+  // re-enables every connector. Takes effect on the next provider session.
+  disabledMcpConnectorIds: Schema.Array(McpConnectorId),
+});
+
 const ThreadActiveReorderCommand = Schema.Struct({
   type: Schema.Literal("thread.active.reorder"),
   commandId: CommandId,
@@ -1440,6 +1454,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUnpinCommand,
   ThreadPinReorderCommand,
   ThreadAutoSettleSetCommand,
+  ThreadMcpConnectorsSetCommand,
   ThreadActiveReorderCommand,
   ThreadMetaUpdateCommand,
   ThreadPullRequestLinkCommand,
@@ -1474,6 +1489,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUnpinCommand,
   ThreadPinReorderCommand,
   ThreadAutoSettleSetCommand,
+  ThreadMcpConnectorsSetCommand,
   ThreadActiveReorderCommand,
   ThreadMetaUpdateCommand,
   ThreadPullRequestLinkCommand,
@@ -1703,6 +1719,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.unpinned",
   "thread.pin-reordered",
   "thread.auto-settle-set",
+  "thread.mcp-connectors-set",
   "thread.meta-updated",
   "thread.pull-request-linked",
   "thread.pull-request-unlinked",
@@ -1845,6 +1862,12 @@ export const ThreadAutoSettleSetPayload = Schema.Struct({
   threadId: ThreadId,
   // Null re-enables automatic settlement.
   autoSettleDisabledAt: Schema.NullOr(IsoDateTime),
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadMcpConnectorsSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  disabledMcpConnectorIds: Schema.Array(McpConnectorId),
   updatedAt: IsoDateTime,
 });
 
@@ -2116,6 +2139,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.auto-settle-set"),
     payload: ThreadAutoSettleSetPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.mcp-connectors-set"),
+    payload: ThreadMcpConnectorsSetPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

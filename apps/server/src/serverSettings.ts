@@ -11,6 +11,7 @@
  * @module ServerSettings
  */
 import {
+  type McpConnectorConfig,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -244,6 +245,89 @@ function listProviderConfigSecrets(settings: ServerSettings): Map<string, string
   return secrets;
 }
 
+/** Secret store key for one secret value of an MCP connector. */
+export function mcpConnectorSecretName(
+  connectorId: string,
+  kind: "env" | "header" | "bearer" | "oauth",
+  name?: string,
+): string {
+  const suffix = name === undefined ? "" : `-${base64Url(name)}`;
+  return `mcp-connector-${base64Url(connectorId)}-${kind}${suffix}`;
+}
+
+/**
+ * Rewrites every secret value of a connector (secret env values, secret
+ * headers, the bearer token) through `replace`, which also learns the
+ * value's secret store key. Non-secret values pass through untouched.
+ */
+export function mapMcpConnectorSecrets(
+  connectorId: string,
+  connector: McpConnectorConfig,
+  replace: (slot: { readonly secretName: string; readonly value: string }) => string,
+): McpConnectorConfig {
+  const transport = connector.transport;
+  if (transport.type === "stdio") {
+    return {
+      ...connector,
+      transport: {
+        ...transport,
+        env: transport.env.map((entry) =>
+          entry.secret
+            ? {
+                ...entry,
+                value: replace({
+                  secretName: mcpConnectorSecretName(connectorId, "env", entry.name),
+                  value: entry.value,
+                }),
+              }
+            : entry,
+        ),
+      },
+    };
+  }
+  return {
+    ...connector,
+    transport: {
+      ...transport,
+      headers: transport.headers.map((entry) =>
+        entry.secret
+          ? {
+              ...entry,
+              value: replace({
+                secretName: mcpConnectorSecretName(connectorId, "header", entry.name),
+                value: entry.value,
+              }),
+            }
+          : entry,
+      ),
+      auth:
+        transport.auth.type === "bearer"
+          ? {
+              ...transport.auth,
+              token: replace({
+                secretName: mcpConnectorSecretName(connectorId, "bearer"),
+                value: transport.auth.token,
+              }),
+            }
+          : transport.auth,
+    },
+  };
+}
+
+const usesOAuth = (connector: McpConnectorConfig | undefined) =>
+  connector?.transport.type === "http" && connector.transport.auth.type === "oauth";
+
+function redactMcpConnectors(
+  connectors: ServerSettings["mcpConnectors"],
+): ServerSettings["mcpConnectors"] {
+  return Object.fromEntries(
+    Object.entries(connectors).map(([id, connector]) => [
+      id,
+      mapMcpConnectorSecrets(id, connector, ({ value }) => redactSecret(value)),
+    ]),
+  ) as ServerSettings["mcpConnectors"];
+}
+
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
 ): ProviderInstanceEnvironmentVariable {
@@ -286,7 +370,13 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
     apiToken: redactSecret(settings.bitbucket.apiToken),
   };
   return mapProviderConfigSecrets(
-    { ...settings, providerInstances, usageLimitSources, bitbucket },
+    {
+      ...settings,
+      providerInstances,
+      usageLimitSources,
+      bitbucket,
+      mcpConnectors: redactMcpConnectors(settings.mcpConnectors),
+    },
     (_secretName, value) => redactSecret(value),
   );
 }
@@ -888,6 +978,36 @@ const make = Effect.gen(function* () {
           );
         bitbucket[field] = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
       }
+      const storedConnectorSecrets = new Map<string, string>();
+      for (const [connectorId, connector] of Object.entries(settings.mcpConnectors)) {
+        const names: string[] = [];
+        mapMcpConnectorSecrets(connectorId, connector, ({ secretName, value }) => {
+          if (value === SECRET_REDACTED) names.push(secretName);
+          return value;
+        });
+        for (const secretName of names) {
+          const secret = yield* secretStore
+            .get(secretName)
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+              ),
+            );
+          storedConnectorSecrets.set(
+            secretName,
+            Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+          );
+        }
+      }
+      const mcpConnectors = Object.fromEntries(
+        Object.entries(settings.mcpConnectors).map(([connectorId, connector]) => [
+          connectorId,
+          mapMcpConnectorSecrets(connectorId, connector, ({ secretName, value }) =>
+            value === SECRET_REDACTED ? (storedConnectorSecrets.get(secretName) ?? "") : value,
+          ),
+        ]),
+      ) as ServerSettings["mcpConnectors"];
       const providerConfigSecrets = new Map<string, string>();
       for (const [secretName, value] of listProviderConfigSecrets(settings)) {
         if (value !== SECRET_REDACTED) continue;
@@ -909,6 +1029,7 @@ const make = Effect.gen(function* () {
           providerInstances: providerInstances as ServerSettings["providerInstances"],
           usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
           bitbucket,
+          mcpConnectors,
         },
         (secretName, value) => providerConfigSecrets.get(secretName) ?? value,
       );
@@ -1071,6 +1192,55 @@ const make = Effect.gen(function* () {
         bitbucket[field] = SECRET_REDACTED;
       }
 
+      // Connector secrets: the marker keeps what is stored, an empty value
+      // clears it, anything else is written. Values hand-edited into
+      // settings.json are moved into the store the same way as Bitbucket's.
+      const currentConnectorValues = new Map<string, string>();
+      for (const [connectorId, connector] of Object.entries(current.mcpConnectors)) {
+        mapMcpConnectorSecrets(connectorId, connector, ({ secretName, value }) => {
+          currentConnectorValues.set(secretName, value);
+          return value;
+        });
+      }
+      const nextConnectorSecrets = new Set<string>();
+      const mcpConnectors = Object.fromEntries(
+        Object.entries(next.mcpConnectors).map(([connectorId, connector]) => [
+          connectorId,
+          mapMcpConnectorSecrets(connectorId, connector, ({ secretName, value }) => {
+            nextConnectorSecrets.add(secretName);
+            let written = value;
+            if (value === SECRET_REDACTED) {
+              const inline = currentConnectorValues.get(secretName);
+              if (inline === undefined || inline === SECRET_REDACTED || inline.length === 0) {
+                return SECRET_REDACTED;
+              }
+              written = inline;
+            }
+            if (written.length === 0) {
+              changes.push({ kind: "remove", secretName, operation: "remove-secret" });
+              return "";
+            }
+            changes.push({ kind: "write", secretName, value: textEncoder.encode(written) });
+            return SECRET_REDACTED;
+          }),
+        ]),
+      ) as ServerSettings["mcpConnectors"];
+      for (const secretName of currentConnectorValues.keys()) {
+        if (nextConnectorSecrets.has(secretName)) continue;
+        changes.push({ kind: "remove", secretName, operation: "remove-stale-secret" });
+      }
+      // OAuth tokens are written by the connector service, but a removed
+      // connector (or one switched away from OAuth) must not leave them behind.
+      const nextConnectors: Readonly<Record<string, McpConnectorConfig>> = next.mcpConnectors;
+      for (const [connectorId, connector] of Object.entries(current.mcpConnectors)) {
+        if (!usesOAuth(connector) || usesOAuth(nextConnectors[connectorId])) continue;
+        changes.push({
+          kind: "remove",
+          secretName: mcpConnectorSecretName(connectorId, "oauth"),
+          operation: "remove-stale-secret",
+        });
+      }
+
       const currentConfigSecrets = listProviderConfigSecrets(current);
       const nextConfigSecretNames = new Set<string>();
       const settings = mapProviderConfigSecrets(
@@ -1079,6 +1249,7 @@ const make = Effect.gen(function* () {
           providerInstances: providerInstances as ServerSettings["providerInstances"],
           usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
           bitbucket,
+          mcpConnectors,
         },
         (secretName, nextValue) => {
           nextConfigSecretNames.add(secretName);
