@@ -949,9 +949,11 @@ jobs:
       AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
 
   # Vercel builds the hosted web app while the desktop jobs run. `--skip-domain`
-  # stages a production deployment without assigning any domain, so nothing is
-  # live until deploy_web aliases it after the GitHub Release is published. A
-  # failed release leaves the staged deployment unaliased.
+  # keeps the custom domains (the channel and router domains) on the previous
+  # deployment until deploy_web aliases them, after the GitHub Release. It does
+  # still move the project's own *.vercel.app production hostname at build time.
+  # That hostname sits behind Vercel SSO and is not a user channel, so the
+  # npm-before-client order in docs/operations/release.md holds for users.
   build_web:
     name: Build hosted web app
     needs: [preflight, relay_public_config]
@@ -1122,8 +1124,9 @@ jobs:
               "${vercel_scope_args[@]}"
           fi
 
-  # Same split as the web app: build a staged production deployment early,
-  # then promote it once the release it links to exists.
+  # Same split as the web app: build a production deployment early, then
+  # promote it to t3.codes once the release it links to exists. As above, the
+  # project's own *.vercel.app hostname moves at build time.
   build_marketing:
     name: Build marketing site
     needs: [preflight]
