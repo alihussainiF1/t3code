@@ -3335,17 +3335,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const { providerThread, target } = rollbackInput;
           const sessionId = yield* sessionIdOf(providerThread);
           const state = threads.get(sessionId);
-          // A run a timed-out Stop or an unanswered request left behind may
-          // still be going, and a cut made meanwhile would race it, so the
-          // server is asked first. Its end may still be on the stream either
-          // way, so the flag stays for the next turn to skip it.
-          const stillStopping =
-            state?.unsettled === true &&
+          // A run may still be going on the server without a turn of this
+          // runtime's: one a timed-out Stop or an unanswered request left
+          // behind, or any run on a session not loaded yet (a server that
+          // outlived T3). A cut made meanwhile would race it, so the server is
+          // asked first. A stopped run's end may still be on the stream, so
+          // `unsettled` stays for the next turn to skip it.
+          const running =
+            (state === undefined || state.unsettled) &&
             sessionId in
               (yield* client.session.active().pipe(Effect.timeout(ACTIVE_CHECK_TIMEOUT)));
           if (
-            state !== undefined &&
-            (state.active !== undefined || stillStopping || hasBackground(state))
+            running ||
+            (state !== undefined && (state.active !== undefined || hasBackground(state)))
           ) {
             return yield* new ProviderAdapter.ProviderAdapterProtocolError({
               driver: OPENCODE_PROVIDER,
@@ -3365,13 +3367,25 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             yield* rollBackTo(sessionId, SessionMessage.ID.make(boundary));
           }
           // The turns after the target left the history with their messages.
+          // The snapshot lists the ones kept as T3 recorded them, which a
+          // runtime that loaded the session after they ran never saw.
           const keptOrdinal = target.type === "provider_turn" ? target.providerTurn.ordinal : 0;
           const loaded = threads.get(sessionId);
           for (const [id, turn] of loaded?.providerTurns ?? []) {
             if (turn.ordinal > keptOrdinal) loaded?.providerTurns.delete(id);
           }
+          const snapshot = yield* snapshotOf(providerThread, sessionId);
+          const kept = new Map(
+            rollbackInput.providerThreadTurns
+              .filter(
+                (turn) =>
+                  turn.providerThreadId === providerThread.id && turn.ordinal <= keptOrdinal,
+              )
+              .map((turn) => [turn.id, turn] as const),
+          );
+          for (const turn of snapshot.providerTurns) kept.set(turn.id, turn);
           // The snapshot's head is the last user message OpenCode kept.
-          return yield* snapshotOf(providerThread, sessionId);
+          return { ...snapshot, providerTurns: [...kept.values()] };
         }).pipe(
           exclusive(rollbackInput.providerThread),
           Effect.mapError((cause) =>
